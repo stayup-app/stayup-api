@@ -394,6 +394,16 @@ export class PostgresStore implements DataStore {
     }
   }
 
+  async clearErrorLogs(): Promise<number> {
+    try {
+      const res = await this.sql`DELETE FROM log`
+      return res.count
+    } catch (err) {
+      if ((err as { code?: string }).code === '42P01') return 0
+      throw err
+    }
+  }
+
   async deleteOldContent(
     provider: string,
     repositoryId: number,

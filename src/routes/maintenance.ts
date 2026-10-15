@@ -46,6 +46,12 @@ maintenanceRoute.get('/logs', async (c) => {
   return c.json({ logs: await store.listErrorLogs(limit) })
 })
 
+// DELETE /logs — empties the failure log.
+maintenanceRoute.delete('/logs', async (c) => {
+  const store = await getStore(c.env.DATABASE_URL)
+  return c.json({ deleted: await store.clearErrorLogs() })
+})
+
 // GET /retention — the global default + each provider's override, if any.
 maintenanceRoute.get('/retention', async (c) => {
   const store = await getStore(c.env.DATABASE_URL)

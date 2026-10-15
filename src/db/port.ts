@@ -241,6 +241,8 @@ export interface DataStore {
   ): Promise<void>
   /** The most recent connector failures, newest first. */
   listErrorLogs(limit: number): Promise<ErrorLogRow[]>
+  /** Empties the connector failure log. Returns the number of rows removed. */
+  clearErrorLogs(): Promise<number>
   /** Deletes a source's rows older than `retentionDays`. Old mechanism, driven
    *  by the connector on every run — replaced by the centralized purge
    *  (`purgeExpiredContent`). Kept so as not to break an older connector. */

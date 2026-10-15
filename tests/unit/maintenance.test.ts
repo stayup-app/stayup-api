@@ -273,3 +273,52 @@ describe('GET /ui/maintenance/logs', () => {
     expect(res.status).toBe(500)
   })
 })
+
+describe('DELETE /ui/maintenance/logs', () => {
+  it('rejects a regular user', async () => {
+    mockSql([])
+    const res = await app.request(
+      '/ui/maintenance/logs',
+      { method: 'DELETE', headers: await authHeaders('user') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(403)
+  })
+
+  it('empties the log for an admin and reports how many rows went', async () => {
+    mockSql([{ count: 12 }])
+    const res = await app.request(
+      '/ui/maintenance/logs',
+      { method: 'DELETE', headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect(await json(res)).toEqual({ deleted: 12 })
+  })
+
+  it('reports 0 while no failure was ever reported', async () => {
+    const sql = createSqlMock()
+    sql.mockRejectedValue(
+      Object.assign(new Error('no such table'), { code: '42P01' }),
+    )
+    vi.mocked(getSql).mockReturnValue(sql as never)
+    const res = await app.request(
+      '/ui/maintenance/logs',
+      { method: 'DELETE', headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(await json(res)).toEqual({ deleted: 0 })
+  })
+
+  it('does not hide other database errors', async () => {
+    const sql = createSqlMock()
+    sql.mockRejectedValue(new Error('connection lost'))
+    vi.mocked(getSql).mockReturnValue(sql as never)
+    const res = await app.request(
+      '/ui/maintenance/logs',
+      { method: 'DELETE', headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(500)
+  })
+})

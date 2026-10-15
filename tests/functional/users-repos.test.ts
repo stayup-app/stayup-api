@@ -333,6 +333,25 @@ describe('GET /ui/maintenance/logs', () => {
   })
 })
 
+describe('DELETE /ui/maintenance/logs', () => {
+  it('empties the failure log', async () => {
+    await sql.unsafe(
+      `INSERT INTO log (repository_id, error, executed_at) VALUES (NULL, 'func-clear-1', now()), (NULL, 'func-clear-2', now())`,
+    )
+    const res = await app.request(
+      '/ui/maintenance/logs',
+      { method: 'DELETE', headers: await authHeaders('admin') },
+      FUNCTIONAL_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).deleted).toBeGreaterThanOrEqual(2)
+    const [row] = (await sql.unsafe('SELECT count(*)::int AS n FROM log')) as {
+      n: number
+    }[]
+    expect(row.n).toBe(0)
+  })
+})
+
 describe('DELETE /ui/repositories/:repoId/data', () => {
   it('returns 403 for user role', async () => {
     const res = await app.request(
