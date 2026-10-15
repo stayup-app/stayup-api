@@ -998,6 +998,32 @@ export const openApiSpec = {
       },
     },
     '/ui/users/{userId}/repositories/{linkId}': {
+      patch: {
+        summary: 'Move a subscription into a folder',
+        description:
+          'Body `{ folder: string | null }` (trimmed, 60 characters max). `null` or an empty string clears the folder.',
+        tags: ['UI — Users'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'linkId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string', format: 'uuid' },
+          },
+        ],
+        responses: {
+          200: { description: 'Updated' },
+          400: { description: 'folder must be a string or null' },
+          404: { description: 'Feed not found' },
+        },
+      },
       delete: {
         summary: 'Remove a flux from a user',
         description:
@@ -1295,6 +1321,172 @@ export const openApiSpec = {
           200: { description: 'Unsubscribed' },
           401: { description: 'Unauthenticated' },
           404: { description: 'Not subscribed to this flux' },
+        },
+      },
+    },
+    '/ui/users/{userId}/state': {
+      get: {
+        summary: 'Read and saved items',
+        description:
+          'The `<provider>:<id>` keys of the items the user read or saved, to sync their devices.',
+        tags: ['Items'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: { description: '{ read: string[], saved: string[] }' },
+          403: { description: 'Not yourself and not an admin' },
+        },
+      },
+    },
+    '/ui/users/{userId}/items/read': {
+      post: {
+        summary: 'Mark items read or unread',
+        description:
+          'Body `{ ids: number[], read?: boolean }` (read defaults to true). Ids matching no item are ignored.',
+        tags: ['Items'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: { description: 'Updated' },
+          400: { description: 'ids must be at most 1000 integers' },
+          403: { description: 'Not yourself and not an admin' },
+        },
+      },
+    },
+    '/ui/users/{userId}/items/{itemId}/saved': {
+      put: {
+        summary: 'Save or unsave an item',
+        description:
+          'Body `{ saved: boolean }`. A saved item is exempt from the retention purge.',
+        tags: ['Items'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'itemId',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: { description: 'Updated' },
+          400: { description: 'saved must be a boolean' },
+          403: { description: 'Not yourself and not an admin' },
+        },
+      },
+    },
+    '/ui/users/{userId}/saved': {
+      get: {
+        summary: 'Saved items',
+        description: "The user's saved items, most recently saved first.",
+        tags: ['Items'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: { description: '{ items: [] }' },
+          403: { description: 'Not yourself and not an admin' },
+        },
+      },
+    },
+    '/ui/users/{userId}/search': {
+      get: {
+        summary: "Search the user's items",
+        description:
+          'Case-insensitive match on item content, among the flux the user follows. `q` needs at least 2 characters; `limit` defaults to 50 (max 200).',
+        tags: ['Items'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'q',
+            in: 'query',
+            required: true,
+            schema: { type: 'string' },
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            required: false,
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: { description: '{ items: [] }' },
+          400: { description: 'q too short' },
+          403: { description: 'Not yourself and not an admin' },
+        },
+      },
+    },
+    '/ui/users/{userId}/push-tokens': {
+      put: {
+        summary: 'Register a push token',
+        description:
+          "Body `{ token, lang? }`: an Expo push token of the user's device. `lang` localizes the notification text.",
+        tags: ['Items'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: { description: 'Registered' },
+          400: { description: 'token is required' },
+          403: { description: 'Not yourself and not an admin' },
+        },
+      },
+      delete: {
+        summary: 'Unregister a push token',
+        description: 'Body `{ token }`.',
+        tags: ['Items'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'userId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          200: { description: 'Unregistered' },
+          400: { description: 'token is required' },
+          403: { description: 'Not yourself and not an admin' },
         },
       },
     },

@@ -145,6 +145,17 @@ CREATE TABLE IF NOT EXISTS verification (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- ─── Per-user item state ───────────────────────────────────────────────────
+-- Read / saved ("read later") flags, synced across a user's devices. A saved
+-- item is exempt from the retention purge (see purgeExpiredContent).
+CREATE TABLE IF NOT EXISTS item_state (
+  user_id  TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  item_id  INTEGER NOT NULL REFERENCES connector_item(id) ON DELETE CASCADE,
+  read_at  TIMESTAMPTZ,
+  saved_at TIMESTAMPTZ,
+  PRIMARY KEY (user_id, item_id)
+);
+
 -- ─── Connector failures ───────────────────────────────────────────────────────
 -- One row per collection failure reported by a connector (POST …/errors).
 CREATE TABLE IF NOT EXISTS log (
@@ -197,3 +208,16 @@ CREATE TABLE IF NOT EXISTS flux_request (
 
 -- Rows migrated from `scrap_request`: they lack the `provider` column.
 ALTER TABLE flux_request ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'scrap';
+
+-- ─── Folders ──────────────────────────────────────────────────────────────────
+-- A user's own grouping of a subscription (NULL = no folder).
+ALTER TABLE user_repository ADD COLUMN IF NOT EXISTS folder TEXT;
+
+-- ─── Push notifications ───────────────────────────────────────────────────────
+-- Expo push tokens of a user's mobile devices. `lang` localizes the message.
+CREATE TABLE IF NOT EXISTS push_token (
+  token      TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  lang       TEXT NOT NULL DEFAULT 'en',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

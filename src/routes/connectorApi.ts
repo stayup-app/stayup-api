@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { ContentItemInput } from '../db/port.js'
 import { getStore } from '../db/store.js'
 import { connectorAuth, requireOwnProvider } from '../middleware/auth.js'
+import { notifyNewItems } from '../push.js'
 import type { Bindings } from '../types.js'
 
 /**
@@ -164,6 +165,16 @@ connectorApiRoute.post('/:provider/items', async (c) => {
 
   const store = await getStore(c.env.DATABASE_URL)
   await store.insertContentItems(provider, items as ContentItemInput[])
+
+  // After the response: the connector must not wait for the push round-trip.
+  const push = notifyNewItems(store, items as ContentItemInput[]).catch((err) =>
+    console.error('Push notification failed:', err),
+  )
+  try {
+    c.executionCtx.waitUntil(push)
+  } catch {
+    // Not running on Workers (Node / tests): the promise simply runs on.
+  }
   return c.json({ success: true, count: items.length }, 201)
 })
 

@@ -1,6 +1,6 @@
 {
   "name": "stayup-api",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -22,7 +22,9 @@
     "deploy": "wrangler deploy"
   },
   "lint-staged": {
-    "*.{ts,tsx,js}": ["biome check --write --no-errors-on-unmatched"]
+    "*.{ts,tsx,js}": [
+      "biome check --write --no-errors-on-unmatched"
+    ]
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",

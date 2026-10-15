@@ -194,6 +194,102 @@ uiUsersRoute.get('/:userId/feed/:connector', requireSelfOrAdmin, async (c) => {
   return c.json({ connector, data })
 })
 
+// ─── Item state: read / saved, synced across the user's devices ─────────────
+
+// GET /ui/users/:userId/state — `<provider>:<id>` keys of read and saved items
+uiUsersRoute.get('/:userId/state', requireSelfOrAdmin, async (c) => {
+  const userId = c.req.param('userId') as string
+  const store = await getStore(c.env.DATABASE_URL)
+  return c.json(await store.getItemState(userId))
+})
+
+// POST /ui/users/:userId/items/read — { ids: number[], read?: boolean }
+uiUsersRoute.post('/:userId/items/read', requireSelfOrAdmin, async (c) => {
+  const userId = c.req.param('userId') as string
+  const body = await c.req.json<{ ids?: unknown; read?: unknown }>()
+  const ids = body.ids
+  if (
+    !Array.isArray(ids) ||
+    ids.length > 1000 ||
+    !ids.every((id) => Number.isInteger(id))
+  ) {
+    return c.json(
+      { error: 'ids must be an array of at most 1000 integers' },
+      400,
+    )
+  }
+  const store = await getStore(c.env.DATABASE_URL)
+  await store.setItemsRead(userId, ids as number[], body.read !== false)
+  return c.json({ success: true })
+})
+
+// PUT /ui/users/:userId/items/:itemId/saved — { saved: boolean }
+uiUsersRoute.put(
+  '/:userId/items/:itemId/saved',
+  requireSelfOrAdmin,
+  async (c) => {
+    const userId = c.req.param('userId') as string
+    const itemId = Number.parseInt(c.req.param('itemId') as string, 10)
+    const body = await c.req.json<{ saved?: unknown }>()
+    if (Number.isNaN(itemId) || typeof body.saved !== 'boolean') {
+      return c.json(
+        { error: 'a numeric item id and a boolean saved are required' },
+        400,
+      )
+    }
+    const store = await getStore(c.env.DATABASE_URL)
+    await store.setItemSaved(userId, itemId, body.saved)
+    return c.json({ success: true })
+  },
+)
+
+// GET /ui/users/:userId/saved — the user's saved items (kept past retention)
+uiUsersRoute.get('/:userId/saved', requireSelfOrAdmin, async (c) => {
+  const userId = c.req.param('userId') as string
+  const store = await getStore(c.env.DATABASE_URL)
+  return c.json({ items: await store.listSavedItems(userId) })
+})
+
+// GET /ui/users/:userId/search?q=&limit= — items of the user's flux containing q
+uiUsersRoute.get('/:userId/search', requireSelfOrAdmin, async (c) => {
+  const userId = c.req.param('userId') as string
+  const q = (c.req.query('q') ?? '').trim()
+  if (q.length < 2) {
+    return c.json({ error: 'q must be at least 2 characters' }, 400)
+  }
+  const raw = Number.parseInt(c.req.query('limit') ?? '', 10)
+  const limit = Number.isNaN(raw) ? 50 : Math.min(Math.max(raw, 1), 200)
+  const store = await getStore(c.env.DATABASE_URL)
+  return c.json({ items: await store.searchItems(userId, q, limit) })
+})
+
+// ─── Push notification tokens (mobile devices) ──────────────────────────────
+
+// PUT /ui/users/:userId/push-tokens — { token, lang? }
+uiUsersRoute.put('/:userId/push-tokens', requireSelfOrAdmin, async (c) => {
+  const userId = c.req.param('userId') as string
+  const body = await c.req.json<{ token?: unknown; lang?: unknown }>()
+  if (typeof body.token !== 'string' || !body.token) {
+    return c.json({ error: 'token is required' }, 400)
+  }
+  const lang = typeof body.lang === 'string' && body.lang ? body.lang : 'en'
+  const store = await getStore(c.env.DATABASE_URL)
+  await store.savePushToken(userId, body.token, lang)
+  return c.json({ success: true })
+})
+
+// DELETE /ui/users/:userId/push-tokens — { token }
+uiUsersRoute.delete('/:userId/push-tokens', requireSelfOrAdmin, async (c) => {
+  const userId = c.req.param('userId') as string
+  const body = await c.req.json<{ token?: unknown }>()
+  if (typeof body.token !== 'string' || !body.token) {
+    return c.json({ error: 'token is required' }, 400)
+  }
+  const store = await getStore(c.env.DATABASE_URL)
+  await store.deletePushToken(userId, body.token)
+  return c.json({ success: true })
+})
+
 // POST /ui/users/:userId/repositories
 uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
@@ -275,6 +371,30 @@ uiUsersRoute.post('/:userId/repositories', requireSelfOrAdmin, async (c) => {
     201,
   )
 })
+
+// PATCH /ui/users/:userId/repositories/:linkId — { folder: string | null }
+uiUsersRoute.patch(
+  '/:userId/repositories/:linkId',
+  requireSelfOrAdmin,
+  async (c) => {
+    const userId = c.req.param('userId') as string
+    const linkId = c.req.param('linkId') as string
+    const body = await c.req.json<{ folder?: unknown }>()
+    const folder =
+      typeof body.folder === 'string' ? body.folder.trim().slice(0, 60) : null
+    if (body.folder !== null && typeof body.folder !== 'string') {
+      return c.json({ error: 'folder must be a string or null' }, 400)
+    }
+    const store = await getStore(c.env.DATABASE_URL)
+    const updated = await store.setSubscriptionFolder(
+      linkId,
+      userId,
+      folder || null,
+    )
+    if (!updated) return c.json({ error: 'Feed not found' }, 404)
+    return c.json({ success: true })
+  },
+)
 
 // DELETE /ui/users/:userId/repositories/:linkId
 uiUsersRoute.delete(

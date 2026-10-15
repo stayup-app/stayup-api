@@ -16,12 +16,15 @@ import type {
   DataStore,
   ErrorLogRow,
   FluxRequestRow,
+  ItemStateKeys,
   NewAdmin,
   NewConnectorKey,
   NewUser,
   ProviderRegistration,
+  PushTarget,
   RegistryEntry,
   Source,
+  SourceHealth,
   SourceSubscriberRow,
   SubscriptionRow,
   UserRow,
@@ -413,6 +416,10 @@ export class PostgresStore implements DataStore {
       DELETE FROM connector_item
       WHERE provider = ${provider} AND repository_id = ${repositoryId}
         AND executed_at < NOW() - ${retentionDays} * INTERVAL '1 day'
+        AND NOT EXISTS (
+          SELECT 1 FROM item_state s
+          WHERE s.item_id = connector_item.id AND s.saved_at IS NOT NULL
+        )
     `
   }
 
@@ -476,6 +483,10 @@ export class PostgresStore implements DataStore {
         DELETE FROM connector_item
         WHERE provider = ${provider}
           AND executed_at < NOW() - ${days} * INTERVAL '1 day'
+          AND NOT EXISTS (
+            SELECT 1 FROM item_state s
+            WHERE s.item_id = connector_item.id AND s.saved_at IS NOT NULL
+          )
       `
       report.push({ provider, deleted: res.count })
     }
@@ -603,17 +614,59 @@ export class PostgresStore implements DataStore {
   }
 
   async listSourcesWithSubscriberCount(): Promise<
-    (Source & { subscriber_count: string })[]
+    (Source & { subscriber_count: string } & SourceHealth)[]
   > {
-    const rows = await this.sql<(Source & { subscriber_count: string })[]>`
-      SELECT r.id, r.url, r.type, r.config,
-        COUNT(ur.id)::text AS subscriber_count
-      FROM repository r
-      LEFT JOIN user_repository ur ON ur.repository_id = r.id
-      GROUP BY r.id
-      ORDER BY r.id
-    `
-    return rows.map(repairConfig)
+    type Row = Source & { subscriber_count: string } & SourceHealth
+    try {
+      const rows = await this.sql<Row[]>`
+        WITH last_item AS (
+          SELECT repository_id, MAX(executed_at) AS at
+          FROM connector_item WHERE success GROUP BY repository_id
+        ),
+        last_err AS (
+          SELECT DISTINCT ON (repository_id) repository_id, error, executed_at
+          FROM log WHERE repository_id IS NOT NULL
+          ORDER BY repository_id, executed_at DESC, id DESC
+        )
+        SELECT r.id, r.url, r.type, r.config,
+          COUNT(ur.id)::text AS subscriber_count,
+          li.at AS last_item_at,
+          le.error AS last_error,
+          le.executed_at AS last_error_at,
+          (
+            SELECT COUNT(*)::int FROM log l
+            WHERE l.repository_id = r.id
+              AND (li.at IS NULL OR l.executed_at > li.at)
+          ) AS failures_since_item
+        FROM repository r
+        LEFT JOIN user_repository ur ON ur.repository_id = r.id
+        LEFT JOIN last_item li ON li.repository_id = r.id
+        LEFT JOIN last_err le ON le.repository_id = r.id
+        GROUP BY r.id, li.at, le.error, le.executed_at
+        ORDER BY r.id
+      `
+      return rows.map(repairConfig)
+    } catch (err) {
+      // No failure has been logged on this database yet: no `log` table.
+      if ((err as { code?: string }).code !== '42P01') throw err
+      const rows = await this.sql<(Source & { subscriber_count: string })[]>`
+        SELECT r.id, r.url, r.type, r.config,
+          COUNT(ur.id)::text AS subscriber_count
+        FROM repository r
+        LEFT JOIN user_repository ur ON ur.repository_id = r.id
+        GROUP BY r.id
+        ORDER BY r.id
+      `
+      return rows.map((r) =>
+        repairConfig({
+          ...r,
+          last_item_at: null,
+          failures_since_item: 0,
+          last_error: null,
+          last_error_at: null,
+        }),
+      )
+    }
   }
 
   async listSourcesOfType(
@@ -638,7 +691,7 @@ export class PostgresStore implements DataStore {
 
   async listSubscriptions(userId: string): Promise<SubscriptionRow[]> {
     const rows = await this.sql<SubscriptionRow[]>`
-      SELECT ur.id, ur.repository_id, ur.created_at, r.url, r.type AS provider, r.config
+      SELECT ur.id, ur.repository_id, ur.created_at, ur.folder, r.url, r.type AS provider, r.config
       FROM user_repository ur
       JOIN repository r ON r.id = ur.repository_id
       WHERE ur.user_id = ${userId}
@@ -724,6 +777,163 @@ export class PostgresStore implements DataStore {
       JOIN "user" u ON u.id = ur.user_id
       WHERE ur.repository_id = ${sourceId}
       ORDER BY ur.created_at, u.email
+    `
+  }
+
+  async setSubscriptionFolder(
+    linkId: string,
+    userId: string,
+    folder: string | null,
+  ): Promise<boolean> {
+    const res = await this.sql`
+      UPDATE user_repository SET folder = ${folder}
+      WHERE id = ${linkId} AND user_id = ${userId}
+    `
+    return res.count > 0
+  }
+
+  // ── Per-user item state ───────────────────────────────────────────────────
+
+  async getItemState(userId: string): Promise<ItemStateKeys> {
+    const rows = await this.sql<
+      { item_id: number; provider: string; read: boolean; saved: boolean }[]
+    >`
+      SELECT s.item_id, ci.provider,
+        s.read_at IS NOT NULL AS read, s.saved_at IS NOT NULL AS saved
+      FROM item_state s
+      JOIN connector_item ci ON ci.id = s.item_id
+      WHERE s.user_id = ${userId}
+    `
+    const key = (r: { provider: string; item_id: number }) =>
+      `${r.provider}:${r.item_id}`
+    return {
+      read: rows.filter((r) => r.read).map(key),
+      saved: rows.filter((r) => r.saved).map(key),
+    }
+  }
+
+  async setItemsRead(
+    userId: string,
+    itemIds: number[],
+    read: boolean,
+  ): Promise<void> {
+    if (itemIds.length === 0) return
+    if (read) {
+      await this.sql`
+        INSERT INTO item_state (user_id, item_id, read_at)
+        SELECT ${userId}, id, NOW() FROM connector_item WHERE id = ANY(${itemIds})
+        ON CONFLICT (user_id, item_id)
+        DO UPDATE SET read_at = COALESCE(item_state.read_at, NOW())
+      `
+    } else {
+      await this.sql`
+        UPDATE item_state SET read_at = NULL
+        WHERE user_id = ${userId} AND item_id = ANY(${itemIds})
+      `
+    }
+  }
+
+  async setItemSaved(
+    userId: string,
+    itemId: number,
+    saved: boolean,
+  ): Promise<void> {
+    if (saved) {
+      await this.sql`
+        INSERT INTO item_state (user_id, item_id, saved_at)
+        SELECT ${userId}, id, NOW() FROM connector_item WHERE id = ${itemId}
+        ON CONFLICT (user_id, item_id)
+        DO UPDATE SET saved_at = COALESCE(item_state.saved_at, NOW())
+      `
+    } else {
+      await this.sql`
+        UPDATE item_state SET saved_at = NULL
+        WHERE user_id = ${userId} AND item_id = ${itemId}
+      `
+    }
+  }
+
+  async listSavedItems(userId: string): Promise<ContentRow[]> {
+    return this.sql<ContentRow[]>`
+      SELECT ci.*
+      FROM item_state s
+      JOIN connector_item ci ON ci.id = s.item_id
+      WHERE s.user_id = ${userId} AND s.saved_at IS NOT NULL
+      ORDER BY s.saved_at DESC
+    `
+  }
+
+  async searchItems(
+    userId: string,
+    query: string,
+    limit: number,
+  ): Promise<ContentRow[]> {
+    // `\`, `%` and `_` are LIKE wildcards: searched literally.
+    const pattern = `%${query.replace(/[\\%_]/g, '\\$&')}%`
+    return this.sql<ContentRow[]>`
+      SELECT ci.*
+      FROM connector_item ci
+      JOIN user_repository ur
+        ON ur.repository_id = ci.repository_id AND ur.user_id = ${userId}
+      WHERE ci.content ILIKE ${pattern}
+      ORDER BY ci.executed_at DESC
+      LIMIT ${limit}
+    `
+  }
+
+  async countUnread(userId: string): Promise<number> {
+    const [row] = await this.sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count FROM (
+        SELECT ci.id,
+          ROW_NUMBER() OVER (
+            PARTITION BY ci.repository_id ORDER BY ci.executed_at DESC
+          ) AS rn
+        FROM connector_item ci
+        JOIN user_repository ur
+          ON ur.repository_id = ci.repository_id AND ur.user_id = ${userId}
+      ) ranked
+      WHERE rn <= 10 AND NOT EXISTS (
+        SELECT 1 FROM item_state s
+        WHERE s.user_id = ${userId} AND s.item_id = ranked.id
+          AND s.read_at IS NOT NULL
+      )
+    `
+    return row?.count ?? 0
+  }
+
+  // ── Push notifications ───────────────────────────────────────────────────
+
+  async savePushToken(
+    userId: string,
+    token: string,
+    lang: string,
+  ): Promise<void> {
+    await this.sql`
+      INSERT INTO push_token (token, user_id, lang)
+      VALUES (${token}, ${userId}, ${lang})
+      ON CONFLICT (token) DO UPDATE SET user_id = ${userId}, lang = ${lang}
+    `
+  }
+
+  async deletePushToken(userId: string, token: string): Promise<boolean> {
+    const res = await this.sql`
+      DELETE FROM push_token WHERE token = ${token} AND user_id = ${userId}
+    `
+    return res.count > 0
+  }
+
+  async removePushTokens(tokens: string[]): Promise<void> {
+    if (tokens.length === 0) return
+    await this.sql`DELETE FROM push_token WHERE token = ANY(${tokens})`
+  }
+
+  async listPushTargets(sourceIds: number[]): Promise<PushTarget[]> {
+    if (sourceIds.length === 0) return []
+    return this.sql<PushTarget[]>`
+      SELECT p.token, p.user_id, p.lang, ur.repository_id
+      FROM push_token p
+      JOIN user_repository ur ON ur.user_id = p.user_id
+      WHERE ur.repository_id = ANY(${sourceIds})
     `
   }
 

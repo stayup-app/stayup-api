@@ -66,6 +66,33 @@ export interface SubscriptionRow {
   url: string
   provider: string
   config: Record<string, unknown>
+  /** The user's own grouping of this subscription, if any. */
+  folder?: string | null
+}
+
+/** A user's read / saved items, as `<provider>:<item id>` keys (the identity the
+ *  apps use for an item). */
+export interface ItemStateKeys {
+  read: string[]
+  saved: string[]
+}
+
+/** A mobile device that receives push notifications. */
+export interface PushTarget {
+  token: string
+  user_id: string
+  lang: string
+  repository_id: number
+}
+
+/** A source's collection health, as shown in the admin's flux list. */
+export interface SourceHealth {
+  /** When the source last produced an item. */
+  last_item_at: string | null
+  /** Collection failures logged since that moment (all of them if none yet). */
+  failures_since_item: number
+  last_error: string | null
+  last_error_at: string | null
 }
 
 export interface UserRow {
@@ -304,7 +331,7 @@ export interface DataStore {
   updateSourceUrl(id: number, url: string): Promise<void>
   deleteSource(id: number): Promise<void>
   listSourcesWithSubscriberCount(): Promise<
-    (Source & { subscriber_count: string })[]
+    (Source & { subscriber_count: string } & SourceHealth)[]
   >
   /** Sources of a given type, with a user's subscription state. */
   listSourcesOfType(
@@ -328,6 +355,45 @@ export interface DataStore {
   countSubscribers(sourceId: number): Promise<number>
   /** The users subscribed to a source, oldest subscription first. */
   listSourceSubscribers(sourceId: number): Promise<SourceSubscriberRow[]>
+  /** Sets (or clears, with `null`) the folder of a subscription. Returns false
+   *  if the user has no such subscription. */
+  setSubscriptionFolder(
+    linkId: string,
+    userId: string,
+    folder: string | null,
+  ): Promise<boolean>
+
+  // ── Per-user item state (read / saved) ───────────────────────────────────
+
+  getItemState(userId: string): Promise<ItemStateKeys>
+  /** Marks items read (or unread). Ids that match no item are ignored. */
+  setItemsRead(userId: string, itemIds: number[], read: boolean): Promise<void>
+  /** Saves (or unsaves) an item. A saved item is exempt from the retention
+   *  purge. Ids that match no item are ignored. */
+  setItemSaved(userId: string, itemId: number, saved: boolean): Promise<void>
+  /** The user's saved items, most recently saved first. */
+  listSavedItems(userId: string): Promise<ContentRow[]>
+  /** Items of the user's subscriptions whose content contains `query`
+   *  (case-insensitive), newest first. */
+  searchItems(
+    userId: string,
+    query: string,
+    limit: number,
+  ): Promise<ContentRow[]>
+  /** Unread items in the user's feed — the same window the apps show (the 10
+   *  most recent per source). */
+  countUnread(userId: string): Promise<number>
+
+  // ── Push notifications ───────────────────────────────────────────────────
+
+  /** Registers (or re-assigns) a device token. */
+  savePushToken(userId: string, token: string, lang: string): Promise<void>
+  /** Returns true if the token belonged to this user. */
+  deletePushToken(userId: string, token: string): Promise<boolean>
+  /** Forgets tokens Expo reported as no longer valid. */
+  removePushTokens(tokens: string[]): Promise<void>
+  /** The devices of the users subscribed to any of these sources. */
+  listPushTargets(sourceIds: number[]): Promise<PushTarget[]>
 
   // ── Users and accounts ───────────────────────────────────────────────────
 
