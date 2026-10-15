@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import app from '../../src/app.js'
-import { TEST_ENV, authHeaders, json, mockSql } from '../helpers.js'
+import {
+  TEST_ENV,
+  authHeaders,
+  createSqlMock,
+  json,
+  mockSql,
+} from '../helpers.js'
 
 vi.mock('../../src/db/client.js', () => ({ getSql: vi.fn() }))
+import { getSql } from '../../src/db/client.js'
 
 beforeEach(() => vi.clearAllMocks())
 
@@ -189,5 +196,80 @@ describe('PATCH /ui/maintenance/retention', () => {
       TEST_ENV,
     )
     expect(res.status).toBe(404)
+  })
+})
+
+describe('GET /ui/maintenance/logs', () => {
+  const LOG = {
+    id: 3,
+    repository_id: 7,
+    url: 'https://blog.dev/feed.xml',
+    provider: 'rss',
+    error: 'HTTP 500',
+    executed_at: '2026-10-15T08:00:00Z',
+  }
+
+  it('rejects a regular user', async () => {
+    mockSql([])
+    const res = await app.request(
+      '/ui/maintenance/logs',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(403)
+  })
+
+  it('lists the latest failures for an admin', async () => {
+    mockSql([[LOG]])
+    const res = await app.request(
+      '/ui/maintenance/logs',
+      { headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).logs).toEqual([LOG])
+  })
+
+  it.each([
+    ['', 100],
+    ['?limit=20', 20],
+    ['?limit=9999', 500],
+    ['?limit=0', 1],
+    ['?limit=abc', 100],
+  ])('clamps the limit (%s → %i)', async (query, expected) => {
+    const sql = mockSql([[]])
+    await app.request(
+      `/ui/maintenance/logs${query}`,
+      { headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(sql.mock.calls[0]).toContain(expected)
+  })
+
+  it('returns an empty list while no failure was ever reported', async () => {
+    const sql = createSqlMock()
+    sql.mockRejectedValue(
+      Object.assign(new Error('no such table'), { code: '42P01' }),
+    )
+    vi.mocked(getSql).mockReturnValue(sql as never)
+    const res = await app.request(
+      '/ui/maintenance/logs',
+      { headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).logs).toEqual([])
+  })
+
+  it('does not hide other database errors', async () => {
+    const sql = createSqlMock()
+    sql.mockRejectedValue(new Error('connection lost'))
+    vi.mocked(getSql).mockReturnValue(sql as never)
+    const res = await app.request(
+      '/ui/maintenance/logs',
+      { headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(500)
   })
 })

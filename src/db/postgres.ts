@@ -14,6 +14,7 @@ import type {
   ContentItemInput,
   ContentRow,
   DataStore,
+  ErrorLogRow,
   FluxRequestRow,
   NewAdmin,
   NewConnectorKey,
@@ -375,6 +376,22 @@ export class PostgresStore implements DataStore {
       INSERT INTO log (repository_id, error, executed_at)
       VALUES (${repositoryId}, ${error}, ${executedAt})
     `
+  }
+
+  async listErrorLogs(limit: number): Promise<ErrorLogRow[]> {
+    try {
+      return await this.sql<ErrorLogRow[]>`
+        SELECT l.id, l.repository_id, r.url, r.type AS provider, l.error, l.executed_at
+        FROM log l
+        LEFT JOIN repository r ON r.id = l.repository_id
+        ORDER BY l.executed_at DESC, l.id DESC
+        LIMIT ${limit}
+      `
+    } catch (err) {
+      // The table is created by the first failure a connector reports: none yet.
+      if ((err as { code?: string }).code === '42P01') return []
+      throw err
+    }
   }
 
   async deleteOldContent(

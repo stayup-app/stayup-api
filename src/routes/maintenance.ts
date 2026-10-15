@@ -36,6 +36,15 @@ maintenanceRoute.post('/cleanup', requireAdminOrCleanupSecret, async (c) => {
 })
 
 maintenanceRoute.use('/retention', authMiddleware, requireAdmin)
+maintenanceRoute.use('/logs', authMiddleware, requireAdmin)
+
+// GET /logs?limit= — the latest connector failures (default 100, max 500).
+maintenanceRoute.get('/logs', async (c) => {
+  const raw = Number.parseInt(c.req.query('limit') ?? '', 10)
+  const limit = Number.isNaN(raw) ? 100 : Math.min(Math.max(raw, 1), 500)
+  const store = await getStore(c.env.DATABASE_URL)
+  return c.json({ logs: await store.listErrorLogs(limit) })
+})
 
 // GET /retention — the global default + each provider's override, if any.
 maintenanceRoute.get('/retention', async (c) => {

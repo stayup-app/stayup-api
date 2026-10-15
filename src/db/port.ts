@@ -83,6 +83,18 @@ export interface SourceSubscriberRow {
   subscribed_at: string
 }
 
+/** A collection failure recorded by a connector. `url` / `provider` come from the
+ *  repository the failure belongs to; null if it was deleted since (or if the
+ *  failure was not tied to one). */
+export interface ErrorLogRow {
+  id: number
+  repository_id: number | null
+  url: string | null
+  provider: string | null
+  error: string
+  executed_at: string
+}
+
 export interface FluxRequestRow {
   id: string
   user_id: string
@@ -227,6 +239,8 @@ export interface DataStore {
     error: string,
     executedAt: string,
   ): Promise<void>
+  /** The most recent connector failures, newest first. */
+  listErrorLogs(limit: number): Promise<ErrorLogRow[]>
   /** Deletes a source's rows older than `retentionDays`. Old mechanism, driven
    *  by the connector on every run — replaced by the centralized purge
    *  (`purgeExpiredContent`). Kept so as not to break an older connector. */

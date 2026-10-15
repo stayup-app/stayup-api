@@ -314,6 +314,25 @@ describe('GET /ui/repositories/:repoId/subscribers', () => {
   })
 })
 
+describe('GET /ui/maintenance/logs', () => {
+  it('shows a connector failure with the repository it belongs to', async () => {
+    await sql.unsafe(
+      `INSERT INTO log (repository_id, error, executed_at) VALUES (${createdRepoId}, 'func-test failure', now())`,
+    )
+    const res = await app.request(
+      '/ui/maintenance/logs?limit=500',
+      { headers: await authHeaders('admin') },
+      FUNCTIONAL_ENV,
+    )
+    expect(res.status).toBe(200)
+    const found = (await json(res)).logs.find(
+      (l: { error: string }) => l.error === 'func-test failure',
+    )
+    expect(found).toMatchObject({ url: REPO_URL, provider: 'rss' })
+    await sql.unsafe(`DELETE FROM log WHERE error = 'func-test failure'`)
+  })
+})
+
 describe('DELETE /ui/repositories/:repoId/data', () => {
   it('returns 403 for user role', async () => {
     const res = await app.request(

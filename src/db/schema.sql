@@ -145,6 +145,15 @@ CREATE TABLE IF NOT EXISTS verification (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- ─── Connector failures ───────────────────────────────────────────────────────
+-- One row per collection failure reported by a connector (POST …/errors).
+CREATE TABLE IF NOT EXISTS log (
+  id            SERIAL PRIMARY KEY,
+  repository_id INTEGER,
+  error         TEXT NOT NULL,
+  executed_at   TIMESTAMPTZ NOT NULL
+);
+
 -- ─── Admins ───────────────────────────────────────────────────────────────────
 -- Administration identities, distinct from user accounts (no feed, no
 -- subscription). The first super admin is created from the command line
