@@ -2,7 +2,7 @@ import { compare, hash } from 'bcryptjs'
 import { Hono } from 'hono'
 import type { DataStore } from '../db/port.js'
 import { listProviders } from '../db/providers.js'
-import { getStore, openSecondaryStores } from '../db/store.js'
+import { getStore } from '../db/store.js'
 import { normalizeEmail } from '../db/users.js'
 import {
   authMiddleware,
@@ -22,107 +22,33 @@ type UserRepo = {
   url: string
   provider: string
   config: Record<string, unknown>
-  /** Set for a subscription to a flux from a secondary database. */
-  data_source_id?: number
-  data_source_name?: string
-}
-
-/** Link id for an external subscription, carried by the feed and recognized by
- *  the subscription DELETE (secondary databases have no link id shared with the
- *  primary one). */
-function externalLinkId(dataSourceId: number, url: string): string {
-  return `ext:${dataSourceId}:${encodeURIComponent(url)}`
-}
-
-export function parseExternalLinkId(
-  linkId: string,
-): { dataSourceId: number; url: string } | null {
-  const m = linkId.match(/^ext:(\d+):(.+)$/)
-  if (!m) return null
-  return { dataSourceId: Number(m[1]), url: decodeURIComponent(m[2]) }
 }
 
 async function getFeedForUser(
   store: DataStore,
   userId: string,
-  env: Bindings,
 ): Promise<{
   repositories: UserRepo[]
   connectors: Record<string, unknown[]>
 }> {
-  const [localSubs, providers, external] = await Promise.all([
+  const [repositories, providers] = await Promise.all([
     store.listSubscriptions(userId),
     listProviders(store),
-    store.listExternalSubscriptions(userId),
   ])
 
-  // Local content, one key per provider.
   const connectors: Record<string, unknown[]> = Object.fromEntries(
     providers.map((p) => [p.name, [] as unknown[]]),
   )
-  const localIds = localSubs.map((r) => r.repository_id)
-  if (localIds.length > 0) {
+  const ids = repositories.map((r) => r.repository_id)
+  if (ids.length > 0) {
     await Promise.all(
       providers.map(async (p) => {
-        connectors[p.name] = await store.latestForSources(p.name, localIds, 10)
+        connectors[p.name] = await store.latestForSources(p.name, ids, 10)
       }),
     )
   }
 
-  // Secondary databases' content: resolved by URL, then tagged by database.
-  const extRepos: UserRepo[] = []
-  if (external.length > 0) {
-    const secondaries = await openSecondaryStores(store, env.JWT_SECRET)
-    for (const s of secondaries) {
-      const subs = external.filter((e) => e.data_source_id === s.id)
-      if (subs.length === 0) continue
-
-      const byProvider = new Map<string, string[]>()
-      for (const sub of subs) {
-        const list = byProvider.get(sub.provider) ?? []
-        list.push(sub.source_url)
-        byProvider.set(sub.provider, list)
-      }
-
-      for (const [provider, urls] of byProvider) {
-        const sources = await s.store
-          .listSourcesOfType(provider, userId)
-          .catch(() => [])
-        const idByUrl = new Map(sources.map((r) => [r.url, r.id]))
-        const ids = urls
-          .map((u) => idByUrl.get(u))
-          .filter((v): v is number => typeof v === 'number')
-
-        const rows =
-          ids.length > 0
-            ? await s.store.latestForSources(provider, ids, 10)
-            : []
-        connectors[provider] = [
-          ...(connectors[provider] ?? []),
-          ...rows.map((r) => ({
-            ...(r as Record<string, unknown>),
-            _data_source_id: s.id,
-            _data_source_name: s.name,
-          })),
-        ]
-
-        for (const url of urls) {
-          extRepos.push({
-            id: externalLinkId(s.id, url),
-            repository_id: 0,
-            created_at: '',
-            url,
-            provider,
-            config: {},
-            data_source_id: s.id,
-            data_source_name: s.name,
-          })
-        }
-      }
-    }
-  }
-
-  return { repositories: [...localSubs, ...extRepos], connectors }
+  return { repositories, connectors }
 }
 
 // ─── Admin-only: user management ────────────────────────────────────────────
@@ -160,72 +86,6 @@ uiUsersRoute.post('/', requireAdmin, async (c) => {
     { user: { id: created.id, name: body.name, email: body.email } },
     201,
   )
-})
-
-// ─── Admin-only: pending sign-ups (REGISTRATION_MODE=approval) ──────────────
-// Declared before `/:userId` so the static segment wins over the parameter.
-
-// GET /ui/users/pending — list accounts awaiting approval
-uiUsersRoute.get('/pending', requireAdmin, async (c) => {
-  const rows = await (await getStore(c.env.DATABASE_URL)).listPendingUsers()
-  return c.json({
-    users: rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      email: r.email,
-      method: r.oauth_provider ?? 'password',
-      created_at: r.created_at,
-    })),
-  })
-})
-
-// POST /ui/users/pending/:id/approve — activate the account
-uiUsersRoute.post('/pending/:id/approve', requireAdmin, async (c) => {
-  const id = c.req.param('id') as string
-  const store = await getStore(c.env.DATABASE_URL)
-  const pending = await store.getPendingUser(id)
-  if (!pending) return c.json({ error: 'Pending user not found' }, 404)
-
-  let created: { id: string } | null = null
-  if (pending.password_hash) {
-    created = await store.createCredentialUser({
-      name: pending.name,
-      email: pending.email,
-      passwordHash: pending.password_hash,
-    })
-  } else if (pending.oauth_provider && pending.oauth_account_id) {
-    const user = await store.createOAuthUser({
-      name: pending.name,
-      email: pending.email,
-      emailVerified: !pending.email.endsWith('@users.noreply.stayup'),
-    })
-    await store.linkOAuthAccount(
-      user.id,
-      pending.oauth_provider,
-      pending.oauth_account_id,
-    )
-    created = { id: user.id }
-  }
-
-  if (!created) {
-    // The e-mail was taken in the meantime (by another approved sign-up).
-    return c.json({ error: 'Email already in use' }, 409)
-  }
-
-  await store.deletePendingUser(id)
-  return c.json(
-    { user: { id: created.id, name: pending.name, email: pending.email } },
-    201,
-  )
-})
-
-// POST /ui/users/pending/:id/reject — drop the request
-uiUsersRoute.post('/pending/:id/reject', requireAdmin, async (c) => {
-  const deleted = await (await getStore(c.env.DATABASE_URL)).deletePendingUser(
-    c.req.param('id') as string,
-  )
-  if (!deleted) return c.json({ error: 'Pending user not found' }, 404)
-  return c.json({ success: true })
 })
 
 // GET /ui/users/:userId — get user profile (self or admin)
@@ -314,11 +174,7 @@ uiUsersRoute.delete('/:userId', requireAdmin, async (c) => {
 // GET /ui/users/:userId/feed
 uiUsersRoute.get('/:userId/feed', requireSelfOrAdmin, async (c) => {
   const userId = c.req.param('userId') as string
-  const data = await getFeedForUser(
-    await getStore(c.env.DATABASE_URL),
-    userId,
-    c.env,
-  )
+  const data = await getFeedForUser(await getStore(c.env.DATABASE_URL), userId)
   return c.json(data)
 })
 
@@ -428,20 +284,6 @@ uiUsersRoute.delete(
     const userId = c.req.param('userId') as string
     const linkId = c.req.param('linkId') as string
     const store = await getStore(c.env.DATABASE_URL)
-
-    // Subscription to a flux from a secondary database: identified by
-    // (database, URL), not by a local link id. We just unsubscribe — the
-    // database is read-only, nothing to purge.
-    const ext = parseExternalLinkId(linkId)
-    if (ext) {
-      const removed = await store.unsubscribeExternal(
-        userId,
-        ext.dataSourceId,
-        ext.url,
-      )
-      if (!removed) return c.json({ error: 'Feed not found' }, 404)
-      return c.json({ success: true })
-    }
 
     const link = await store.findSubscription(linkId, userId)
 

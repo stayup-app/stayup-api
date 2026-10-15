@@ -127,18 +127,9 @@ describe('POST /auth/login (user)', () => {
     )
   }
 
-  it('returns 401 when no credential and no pending sign-up match', async () => {
-    // findCredentialByEmail → none ; findPendingUserByEmail → none
-    mockSql([[], []])
+  it('returns 401 when no credential matches', async () => {
+    mockSql([[]])
     const res = await login()
     expect(res.status).toBe(401)
-  })
-
-  it('returns 403 pending_approval when the account still awaits validation', async () => {
-    // findCredentialByEmail → none ; findPendingUserByEmail → one row
-    mockSql([[], [{ id: 'p-1', name: 'Ada', email: 'ada@example.com' }]])
-    const res = await login()
-    expect(res.status).toBe(403)
-    expect((await json(res)).error).toBe('pending_approval')
   })
 })

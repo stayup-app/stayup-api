@@ -1,6 +1,6 @@
 {
   "name": "stayup-api",
-  "version": "2.5.1",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -19,8 +19,7 @@
     "create-admin": "tsx scripts/create-admin.ts",
     "create-admin:prod": "node dist/scripts/create-admin.js",
     "dev:worker": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "test:conformance": "vitest run tests/conformance"
+    "deploy": "wrangler deploy"
   },
   "lint-staged": {
     "*.{ts,tsx,js}": ["biome check --write --no-errors-on-unmatched"]
@@ -35,13 +34,9 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/bcryptjs": "^2.4.6",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.10.2",
-    "better-sqlite3": "^12.11.1",
     "husky": "^9.1.7",
     "lint-staged": "^15.2.11",
-    "mongodb": "^7.6.0",
-    "mysql2": "^3.24.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8",

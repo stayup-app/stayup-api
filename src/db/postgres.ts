@@ -13,15 +13,11 @@ import type {
   ConnectorKeyRow,
   ContentItemInput,
   ContentRow,
-  DataSourceRow,
   DataStore,
-  ExternalSubscriptionRow,
   FluxRequestRow,
   NewAdmin,
   NewConnectorKey,
-  NewPendingUser,
   NewUser,
-  PendingUserRow,
   ProviderRegistration,
   RegistryEntry,
   Source,
@@ -47,13 +43,6 @@ function repairConfig<T extends { config?: unknown }>(row: T): T {
   }
 }
 
-/**
- * A provider's `template` is only relayed if it declared one: a row with no
- * manifest comes out without the key (not `template: null`), so the shape is
- * identical to the one from before the column existed. A doubly-serialized
- * string (same quirk as `config`) is repaired along the way. `flux_approval` is
- * always present, `auto` by default.
- */
 function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
   const base: RegistryEntry = {
     name: row.name,
@@ -67,14 +56,7 @@ function normalizeRegistryRow(row: RegistryEntry): RegistryEntry {
   if (Number.isFinite(retention) && row.retention_days != null) {
     base.retention_days = retention
   }
-  if (row.template == null) return base
-  if (typeof row.template !== 'string')
-    return { ...base, template: row.template }
-  try {
-    return { ...base, template: JSON.parse(row.template) }
-  } catch {
-    return base
-  }
+  return base
 }
 
 export class PostgresStore implements DataStore {
@@ -90,7 +72,7 @@ export class PostgresStore implements DataStore {
       .unsafe(
         `CREATE TABLE IF NOT EXISTS provider_registry (
            name TEXT PRIMARY KEY, display_name TEXT NOT NULL,
-           sort_order INTEGER NOT NULL DEFAULT 100, template JSONB,
+           sort_order INTEGER NOT NULL DEFAULT 100,
            flux_approval TEXT NOT NULL DEFAULT 'auto',
            retention_days INTEGER,
            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
@@ -163,15 +145,14 @@ export class PostgresStore implements DataStore {
     //
     // We degrade column by column on `42703` (missing column): first without
     // `retention_days` (registry not migrated by a recent write yet — above all
-    // do not lose `template` / `flux_approval` in the process, otherwise apps
-    // lose icons and formatting), then down to the bare minimum.
+    // do not lose `flux_approval` in the process), then down to the bare minimum.
     const isMissingColumn = (err: unknown) =>
       (err as { code?: string }).code === '42703'
 
     try {
       return (
         await this.sql<RegistryEntry[]>`
-          SELECT name, display_name, sort_order, template, flux_approval, retention_days
+          SELECT name, display_name, sort_order, flux_approval, retention_days
           FROM provider_registry
           WHERE name = ANY(${names})
         `
@@ -183,7 +164,7 @@ export class PostgresStore implements DataStore {
     try {
       return (
         await this.sql<RegistryEntry[]>`
-          SELECT name, display_name, sort_order, template, flux_approval
+          SELECT name, display_name, sort_order, flux_approval
           FROM provider_registry
           WHERE name = ANY(${names})
         `
@@ -475,27 +456,11 @@ export class PostgresStore implements DataStore {
 
   async registerProvider(entry: ProviderRegistration): Promise<void> {
     await this.ensureProviderRegistryTable()
-    // `template` omitted (undefined): we do not touch the one already stored.
-    if (entry.template === undefined) {
-      await this.sql`
-        INSERT INTO provider_registry (name, display_name, sort_order)
-        VALUES (${entry.name}, ${entry.displayName}, ${entry.sortOrder ?? 100})
-        ON CONFLICT (name) DO UPDATE SET
-          display_name = EXCLUDED.display_name,
-          updated_at = NOW()
-      `
-      return
-    }
-    const templateValue =
-      entry.template == null
-        ? null
-        : (this.sql.json(entry.template as postgres.JSONValue) as never)
     await this.sql`
-      INSERT INTO provider_registry (name, display_name, sort_order, template)
-      VALUES (${entry.name}, ${entry.displayName}, ${entry.sortOrder ?? 100}, ${templateValue})
+      INSERT INTO provider_registry (name, display_name, sort_order)
+      VALUES (${entry.name}, ${entry.displayName}, ${entry.sortOrder ?? 100})
       ON CONFLICT (name) DO UPDATE SET
         display_name = EXCLUDED.display_name,
-        template = EXCLUDED.template,
         updated_at = NOW()
     `
   }
@@ -750,182 +715,6 @@ export class PostgresStore implements DataStore {
       throw err
     }
     return { id: userId }
-  }
-
-  // ── Pending sign-ups ─────────────────────────────────────────────────────
-
-  /** Workers never applies schema.sql: the table is born on first use. */
-  private async ensurePendingUserTable(): Promise<void> {
-    await this.sql
-      .unsafe(
-        `CREATE TABLE IF NOT EXISTS pending_user (
-           id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE,
-           password_hash TEXT, oauth_provider TEXT, oauth_account_id TEXT,
-           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`,
-      )
-      .catch(() => {})
-  }
-
-  async createPendingUser(
-    input: NewPendingUser,
-  ): Promise<{ id: string } | null> {
-    await this.ensurePendingUserTable()
-    const id = crypto.randomUUID()
-    try {
-      await this.sql`
-        INSERT INTO pending_user
-          (id, name, email, password_hash, oauth_provider, oauth_account_id, created_at)
-        VALUES (${id}, ${input.name}, ${input.email}, ${input.passwordHash ?? null},
-                ${input.oauthProvider ?? null}, ${input.oauthAccountId ?? null},
-                ${new Date().toISOString()})
-      `
-    } catch (err) {
-      if ((err as { code?: string }).code === '23505') return null
-      throw err
-    }
-    return { id }
-  }
-
-  async findPendingUserByEmail(email: string): Promise<PendingUserRow | null> {
-    try {
-      const [row] = await this.sql<PendingUserRow[]>`
-        SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
-        FROM pending_user WHERE LOWER(email) = ${email} LIMIT 1
-      `
-      return row ?? null
-    } catch (err) {
-      if ((err as { code?: string }).code === '42P01') return null
-      throw err
-    }
-  }
-
-  async listPendingUsers(): Promise<PendingUserRow[]> {
-    try {
-      return await this.sql<PendingUserRow[]>`
-        SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
-        FROM pending_user ORDER BY created_at
-      `
-    } catch (err) {
-      if ((err as { code?: string }).code === '42P01') return []
-      throw err
-    }
-  }
-
-  async getPendingUser(id: string): Promise<PendingUserRow | null> {
-    try {
-      const [row] = await this.sql<PendingUserRow[]>`
-        SELECT id, name, email, password_hash, oauth_provider, oauth_account_id, created_at
-        FROM pending_user WHERE id = ${id}
-      `
-      return row ?? null
-    } catch (err) {
-      if ((err as { code?: string }).code === '42P01') return null
-      throw err
-    }
-  }
-
-  async deletePendingUser(id: string): Promise<boolean> {
-    try {
-      const rows = await this.sql<{ id: string }[]>`
-        DELETE FROM pending_user WHERE id = ${id} RETURNING id
-      `
-      return rows.length > 0
-    } catch (err) {
-      if ((err as { code?: string }).code === '42P01') return false
-      throw err
-    }
-  }
-
-  // ── Secondary databases ────────────────────────────────────────────────
-
-  /** Workers never applies schema.sql: the tables are born on first use. */
-  private async ensureMultiDbTables(): Promise<void> {
-    await this.sql
-      .unsafe(
-        `CREATE TABLE IF NOT EXISTS data_source (
-           id SERIAL PRIMARY KEY, name TEXT NOT NULL, url_enc TEXT NOT NULL,
-           engine TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
-         CREATE TABLE IF NOT EXISTS external_subscription (
-           id TEXT PRIMARY KEY,
-           user_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
-           data_source_id INTEGER NOT NULL REFERENCES data_source(id) ON DELETE CASCADE,
-           provider TEXT NOT NULL, source_url TEXT NOT NULL,
-           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-           UNIQUE (user_id, data_source_id, source_url))`,
-      )
-      .catch(() => {})
-  }
-
-  async listDataSources(): Promise<DataSourceRow[]> {
-    await this.ensureMultiDbTables()
-    return this.sql<DataSourceRow[]>`
-      SELECT id, name, engine, url_enc, created_at FROM data_source ORDER BY id
-    `
-  }
-
-  async createDataSource(input: {
-    name: string
-    engine: string
-    urlEnc: string
-  }): Promise<{ id: number }> {
-    await this.ensureMultiDbTables()
-    const [row] = await this.sql<{ id: number }[]>`
-      INSERT INTO data_source (name, engine, url_enc)
-      VALUES (${input.name}, ${input.engine}, ${input.urlEnc})
-      RETURNING id
-    `
-    return { id: row.id }
-  }
-
-  async deleteDataSource(id: number): Promise<boolean> {
-    await this.ensureMultiDbTables()
-    const rows = await this.sql<{ id: number }[]>`
-      DELETE FROM data_source WHERE id = ${id} RETURNING id
-    `
-    return rows.length > 0
-  }
-
-  async listExternalSubscriptions(
-    userId: string,
-  ): Promise<ExternalSubscriptionRow[]> {
-    await this.ensureMultiDbTables()
-    return this.sql<ExternalSubscriptionRow[]>`
-      SELECT data_source_id, provider, source_url
-      FROM external_subscription WHERE user_id = ${userId}
-    `
-  }
-
-  async subscribeExternal(
-    userId: string,
-    dataSourceId: number,
-    provider: string,
-    url: string,
-  ): Promise<ExternalSubscriptionRow | null> {
-    await this.ensureMultiDbTables()
-    try {
-      await this.sql`
-        INSERT INTO external_subscription (id, user_id, data_source_id, provider, source_url)
-        VALUES (${crypto.randomUUID()}, ${userId}, ${dataSourceId}, ${provider}, ${url})
-      `
-    } catch (err) {
-      if ((err as { code?: string }).code === '23505') return null
-      throw err
-    }
-    return { data_source_id: dataSourceId, provider, source_url: url }
-  }
-
-  async unsubscribeExternal(
-    userId: string,
-    dataSourceId: number,
-    url: string,
-  ): Promise<boolean> {
-    await this.ensureMultiDbTables()
-    const rows = await this.sql<{ id: string }[]>`
-      DELETE FROM external_subscription
-      WHERE user_id = ${userId} AND data_source_id = ${dataSourceId} AND source_url = ${url}
-      RETURNING id
-    `
-    return rows.length > 0
   }
 
   async findCredentialByEmail(email: string) {

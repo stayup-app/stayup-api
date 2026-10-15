@@ -39,15 +39,7 @@ describe('closeSql', () => {
   })
 })
 
-// The engine is chosen from the URL scheme: it is the entry point of multi-
-// database support, and an unrecognized URL must be refused right away rather
-// than failing on the first query.
 describe('getStore', () => {
-  it('accepts sqlite, which loads its driver on demand', async () => {
-    const { getStore } = await import('../../src/db/store.js')
-    expect(await getStore('sqlite::memory:')).toBeTruthy()
-  })
-
   it('accepts the postgres schemes', async () => {
     const { getStore } = await import('../../src/db/store.js')
     for (const url of [
@@ -56,15 +48,5 @@ describe('getStore', () => {
     ]) {
       expect(await getStore(url)).toBeTruthy()
     }
-  })
-
-  it('names the supported schemes when the engine is unknown', async () => {
-    const { getStore, SUPPORTED_SCHEMES } = await import(
-      '../../src/db/store.js'
-    )
-    for (const url of ['redis://x/y', 'cassandra://x/y', 'nonsense']) {
-      await expect(getStore(url)).rejects.toThrow(/Unsupported database/)
-    }
-    expect(SUPPORTED_SCHEMES).toContain('postgres:')
   })
 })

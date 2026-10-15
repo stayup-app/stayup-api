@@ -3,7 +3,7 @@ import { sign, verify } from 'hono/jwt'
 import type { DataStore } from '../db/port.js'
 import { getStore } from '../db/store.js'
 import { normalizeEmail } from '../db/users.js'
-import { type Bindings, registrationMode } from '../types.js'
+import type { Bindings } from '../types.js'
 
 export const oauthRoute = new Hono<{ Bindings: Bindings }>()
 
@@ -92,7 +92,6 @@ oauthRoute.get('/oauth/google/callback', async (c) => {
     profile.verified_email === false ? '' : profile.email,
     profile.name,
     c.env.JWT_SECRET,
-    registrationMode(c.env),
   )
 
   return c.redirect(
@@ -213,7 +212,6 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
     email,
     profile.name ?? profile.login,
     c.env.JWT_SECRET,
-    registrationMode(c.env),
   )
 
   return c.redirect(
@@ -229,20 +227,18 @@ oauthRoute.get('/oauth/github/callback', async (c) => {
 // ─── Shared helper ────────────────────────────────────────────────────────────
 
 /** Builds the return URL after OAuth: `?token=` on success, or
- *  `?error=pending_approval` if the account is awaiting admin approval. If the
+ *  If the
  *  client provided a `client_state`, it is returned as-is in `&state=`. */
 function oauthCallbackRedirect(
   env: Bindings,
   redirectUri: string | undefined,
-  result: { token: string } | { pending: true },
+  result: { token: string },
   clientState?: string,
 ): string {
   const base = isMobileRedirectUri(redirectUri)
     ? redirectUri
     : `${env.UI_URL}/api/auth/callback`
-  const parts = [
-    'pending' in result ? 'error=pending_approval' : `token=${result.token}`,
-  ]
+  const parts = [`token=${result.token}`]
   if (clientState) parts.push(`state=${encodeURIComponent(clientState)}`)
   return `${base}?${parts.join('&')}`
 }
@@ -297,8 +293,7 @@ async function findOrCreateOAuthUser(
   email: string,
   name: string,
   jwtSecret: string,
-  mode: 'open' | 'approval',
-): Promise<{ token: string } | { pending: true }> {
+): Promise<{ token: string }> {
   // Check if OAuth account exists
   const existing = await store.findOAuthAccount(provider, providerAccountId)
 
@@ -323,27 +318,13 @@ async function findOrCreateOAuthUser(
 
     if (byEmail) {
       // The verified e-mail matches an already-active account: we link this
-      // provider to that account, no approval to ask for.
+      // provider to that account,
       userId = byEmail.id
       resolvedName = byEmail.name
       resolvedEmail = verifiedEmail
     } else {
       resolvedEmail =
         verifiedEmail || `${provider}-${providerAccountId}@users.noreply.stayup`
-
-      // New identity + `approval` mode: we put it on hold instead of creating
-      // the account. The row stores the provider so admin approval can recreate
-      // the identity identically. A duplicate (already pending) is a no-op: the
-      // result is the same, "pending".
-      if (mode === 'approval') {
-        await store.createPendingUser({
-          name,
-          email: resolvedEmail,
-          oauthProvider: provider,
-          oauthAccountId: providerAccountId,
-        })
-        return { pending: true }
-      }
 
       resolvedName = name
       userId = (

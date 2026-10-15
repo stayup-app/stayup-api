@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
-import { listMergedProviders } from '../db/providers.js'
-import { getStore, openSecondaryStores } from '../db/store.js'
+import { listProviders } from '../db/providers.js'
+import { getStore } from '../db/store.js'
 import { authMiddleware, requireAdmin } from '../middleware/auth.js'
 import type { Bindings } from '../types.js'
 
@@ -9,27 +9,14 @@ export const connectorsRoute = new Hono<{ Bindings: Bindings }>()
 connectorsRoute.use('*', authMiddleware)
 connectorsRoute.use('/latest', requireAdmin)
 
-// GET /connectors/providers — lightweight list of available providers (name +
-// label + approval mode), merged across the primary database and every
-// secondary database: a single entry per provider name.
+// GET /connectors/providers — the available providers (name + label + approval mode).
 connectorsRoute.get('/providers', async (c) => {
-  const primary = await getStore(c.env.DATABASE_URL)
-  const secondaries = await openSecondaryStores(primary, c.env.JWT_SECRET)
-  const providers = await listMergedProviders([
-    primary,
-    ...secondaries.map((s) => s.store),
-  ])
+  const providers = await listProviders(await getStore(c.env.DATABASE_URL))
   return c.json({
-    // `template` (the display manifest declared by the provider) is only
-    // present for those that publish one; otherwise apps fall back to their
-    // generic rendering. The API does not interpret it. `fluxApproval` tells the
-    // app whether adding a flux is immediate (`auto`) or goes through a request
-    // (`manual`).
     providers: providers.map((p) => ({
       name: p.name,
       displayName: p.displayName,
       fluxApproval: p.flux_approval,
-      ...(p.template == null ? {} : { template: p.template }),
     })),
   })
 })

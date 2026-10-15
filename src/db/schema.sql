@@ -19,9 +19,6 @@ CREATE TABLE IF NOT EXISTS provider_registry (
   name          TEXT PRIMARY KEY,
   display_name  TEXT NOT NULL,
   sort_order    INTEGER NOT NULL DEFAULT 100,
-  -- Display manifest declared by the provider for the apps (free-form, see
-  -- docs/self-hosting-and-providers.md). NULL = the apps render generically.
-  template      JSONB,
   -- 'auto'  : a user adding a flux creates the source immediately.
   -- 'manual': adding creates a request an admin must approve (see flux_request).
   flux_approval TEXT NOT NULL DEFAULT 'auto',
@@ -31,9 +28,6 @@ CREATE TABLE IF NOT EXISTS provider_registry (
   retention_days INTEGER,
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
--- Registry predating the `template` column: we add it without rewriting anything.
-ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS template JSONB;
 
 -- Registry predating `retention_days`: idempotent add.
 ALTER TABLE provider_registry ADD COLUMN IF NOT EXISTS retention_days INTEGER;
@@ -151,20 +145,6 @@ CREATE TABLE IF NOT EXISTS verification (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- ─── Pending sign-ups (REGISTRATION_MODE=approval) ───────────────────────────
--- In `approval` mode, a new account lands here and does not exist in "user"
--- yet: it cannot log in. An admin approves it (row copied into "user"/"account")
--- or rejects it (row deleted). In `open` mode this table is never populated.
-CREATE TABLE IF NOT EXISTS pending_user (
-  id               TEXT PRIMARY KEY,
-  name             TEXT NOT NULL,
-  email            TEXT NOT NULL UNIQUE,
-  password_hash    TEXT,
-  oauth_provider   TEXT,
-  oauth_account_id TEXT,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 -- ─── Admins ───────────────────────────────────────────────────────────────────
 -- Administration identities, distinct from user accounts (no feed, no
 -- subscription). The first super admin is created from the command line
@@ -188,32 +168,6 @@ CREATE TABLE IF NOT EXISTS user_repository (
   repository_id INTEGER NOT NULL REFERENCES repository(id),
   created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, repository_id)
-);
-
--- ─── Secondary data sources ─────────────────────────────────────────────────
--- Extra databases, read-only, that contain only connector_* tables. The API
--- aggregates their content into the feeds; it never writes to them.
--- `url_enc`: encrypted connection string (see db/secretbox.ts).
-
-CREATE TABLE IF NOT EXISTS data_source (
-  id         SERIAL PRIMARY KEY,
-  name       TEXT NOT NULL,
-  url_enc    TEXT NOT NULL,
-  engine     TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- A user's subscription to a flux living in a secondary database. The flux is
--- identified there by its URL — numeric ids do not cross databases.
-
-CREATE TABLE IF NOT EXISTS external_subscription (
-  id             TEXT PRIMARY KEY,
-  user_id        TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
-  data_source_id INTEGER NOT NULL REFERENCES data_source(id) ON DELETE CASCADE,
-  provider       TEXT NOT NULL,
-  source_url     TEXT NOT NULL,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (user_id, data_source_id, source_url)
 );
 
 -- ─── Flux requests (approval queue) ────────────────────────────────────────

@@ -45,14 +45,6 @@ export interface RegistryEntry {
   display_name: string
   sort_order: number
   /**
-   * Display manifest the provider declares for the apps (column
-   * `provider_registry.template`, free-form JSON). Absent as long as no
-   * up-to-date collector has run or the provider does not publish one — apps
-   * then fall back to their generic rendering. The API does not interpret it, it
-   * relays it.
-   */
-  template?: unknown
-  /**
    * Mode for a user adding a flux: `auto` (the flux is created immediately) or
    * `manual` (a request is queued for an admin). Absent → `auto` (column
    * `flux_approval` not present yet).
@@ -99,45 +91,6 @@ export interface NewUser {
   passwordHash: string
 }
 
-/** A sign-up awaiting admin approval (REGISTRATION_MODE=approval).
- *  `password_hash` carried for an e-mail account, `oauth_*` for an OAuth account;
- *  one or the other, never both. */
-export interface PendingUserRow {
-  id: string
-  name: string
-  email: string
-  password_hash: string | null
-  oauth_provider: string | null
-  oauth_account_id: string | null
-  created_at: string
-}
-
-export interface NewPendingUser {
-  name: string
-  email: string
-  passwordHash?: string
-  oauthProvider?: string
-  oauthAccountId?: string
-}
-
-/** A secondary database declared by an admin: read-only, only used to aggregate
- *  connector_* content. `url_enc` is encrypted (see db/secretbox.ts). */
-export interface DataSourceRow {
-  id: number
-  name: string
-  engine: string
-  url_enc: string
-  created_at: string
-}
-
-/** A user's subscription to a flux from a secondary database, identified by
- *  (database, provider, flux URL) — numeric ids do not cross databases. */
-export interface ExternalSubscriptionRow {
-  data_source_id: number
-  provider: string
-  source_url: string
-}
-
 /** An administrator. Identity distinct from a user: no feed, no subscription.
  *  `is_super` = allowed to manage other admins. */
 export interface AdminRow {
@@ -178,7 +131,6 @@ export interface ProviderRegistration {
   name: string
   displayName: string
   sortOrder?: number
-  template?: unknown
 }
 
 /** A connector API key, without the secret (never shown again after its
@@ -218,14 +170,8 @@ export interface DataStore {
   /** Changes a provider's flux-adding mode (`auto` | `manual`). Admin only —
    *  a connector cannot self-approve. */
   setProviderApproval(name: string, approval: 'auto' | 'manual'): Promise<void>
-  /** A connector's self-declaration at startup (display name + template).
-   *  Idempotent: a second call updates `displayName`, never `sortOrder` or
-   *  `flux_approval`. `template` is only replaced (including with `null`) if it
-   *  is present in the call — a call that does not provide it at all
-   *  (`undefined`) leaves the existing template intact, so as not to wipe a
-   *  provider's display on a partial call (seen in prod: a simple auth test with
-   *  `{ displayName }` alone had wiped `rss`'s template). Creates the row if it
-   *  does not exist. */
+  /** A connector's self-declaration at startup (display name). Idempotent:
+   *  never rewrites `sortOrder` or `flux_approval`. Creates the row if needed. */
   registerProvider(entry: ProviderRegistration): Promise<void>
 
   // ── Collected content ─────────────────────────────────────────────────────
@@ -362,45 +308,6 @@ export interface DataStore {
   /** Creates the user and their password account in a single unit. */
   createCredentialUser(user: NewUser): Promise<{ id: string } | null>
 
-  // ── Pending sign-ups (REGISTRATION_MODE=approval) ─────────────────────────
-  // An account awaiting admin approval. While it is there, it does not exist in
-  // `user` and cannot log in.
-
-  /** Records a pending sign-up. Returns null if the e-mail is already taken. */
-  createPendingUser(input: NewPendingUser): Promise<{ id: string } | null>
-  findPendingUserByEmail(email: string): Promise<PendingUserRow | null>
-  listPendingUsers(): Promise<PendingUserRow[]>
-  getPendingUser(id: string): Promise<PendingUserRow | null>
-  /** Deletes the row (approved, or rejected). false if it did not exist. */
-  deletePendingUser(id: string): Promise<boolean>
-
-  // ── Secondary databases (admin) ─────────────────────────────────────────
-  // Read-only databases from which only connector_* content is aggregated.
-
-  listDataSources(): Promise<DataSourceRow[]>
-  createDataSource(input: {
-    name: string
-    engine: string
-    urlEnc: string
-  }): Promise<{ id: number }>
-  /** Deletes the database and, cascading, the external subscriptions targeting it. */
-  deleteDataSource(id: number): Promise<boolean>
-
-  // ── Subscriptions to secondary databases' fluxes ────────────────────────
-
-  listExternalSubscriptions(userId: string): Promise<ExternalSubscriptionRow[]>
-  /** Returns null if the subscription already exists. */
-  subscribeExternal(
-    userId: string,
-    dataSourceId: number,
-    provider: string,
-    url: string,
-  ): Promise<ExternalSubscriptionRow | null>
-  unsubscribeExternal(
-    userId: string,
-    dataSourceId: number,
-    url: string,
-  ): Promise<boolean>
   findCredentialByEmail(email: string): Promise<{
     id: string
     name: string

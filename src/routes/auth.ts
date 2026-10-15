@@ -4,20 +4,13 @@ import { sign } from 'hono/jwt'
 import { getStore } from '../db/store.js'
 import { normalizeEmail } from '../db/users.js'
 import { authMiddleware } from '../middleware/auth.js'
-import { type Bindings, registrationMode } from '../types.js'
+import type { Bindings } from '../types.js'
 
 export const authRoute = new Hono<{ Bindings: Bindings }>()
 
-// GET /auth/config — what a client needs to know before showing the login
-// screen: registration mode, and which login methods this instance offers.
-// Public, unauthenticated — a client uses it precisely to choose which API to
-// connect to.
+// GET /auth/config — which login methods this API offers. Public.
 authRoute.get('/config', (c) => {
   return c.json({
-    // Human-readable instance label (INSTANCE_NAME). `null` if unset: apps then
-    // fall back to the URL's host.
-    name: c.env.INSTANCE_NAME || null,
-    registrationMode: registrationMode(c.env),
     emailPassword: true,
     oauth: {
       google: Boolean(c.env.GOOGLE_CLIENT_ID && c.env.GOOGLE_CLIENT_SECRET),
@@ -78,16 +71,6 @@ authRoute.post('/login', async (c) => {
   const account = await store.findCredentialByEmail(normalizeEmail(body.email))
 
   if (!account) {
-    // Account created in `approval` mode but not yet approved: it is not in
-    // `user`, so `findCredentialByEmail` does not see it. We say so clearly
-    // rather than "invalid credentials", which would send the user re-typing a
-    // correct password over and over.
-    const pending = await store.findPendingUserByEmail(
-      normalizeEmail(body.email),
-    )
-    if (pending) {
-      return c.json({ error: 'pending_approval' }, 403)
-    }
     return c.json({ error: 'Invalid credentials' }, 401)
   }
 
@@ -146,23 +129,6 @@ authRoute.post('/register', async (c) => {
   const store = await getStore(c.env.DATABASE_URL)
   const email = normalizeEmail(body.email)
   const passwordHash = await hash(body.password, 10)
-
-  // `approval` mode: the account is not created, it is put on hold. No token —
-  // the user cannot log in before an admin approves it.
-  if (registrationMode(c.env) === 'approval') {
-    if (await store.findUserByEmail(email)) {
-      return c.json({ error: 'Email already in use' }, 409)
-    }
-    const pending = await store.createPendingUser({
-      name: body.name,
-      email,
-      passwordHash,
-    })
-    if (!pending) {
-      return c.json({ error: 'Email already in use' }, 409)
-    }
-    return c.json({ status: 'pending_approval' }, 202)
-  }
 
   const created = await store.createCredentialUser({
     name: body.name,

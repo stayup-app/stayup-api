@@ -20,8 +20,6 @@ const {
   GOOGLE_CLIENT_SECRET = '',
   GITHUB_CLIENT_ID = '',
   GITHUB_CLIENT_SECRET = '',
-  REGISTRATION_MODE = 'open',
-  INSTANCE_NAME = '',
 } = process.env
 
 const databaseUrl =
@@ -39,8 +37,6 @@ serve(
         GOOGLE_CLIENT_SECRET,
         GITHUB_CLIENT_ID,
         GITHUB_CLIENT_SECRET,
-        REGISTRATION_MODE,
-        INSTANCE_NAME,
       }),
     port: Number(PORT),
   },

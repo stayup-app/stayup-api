@@ -7,7 +7,7 @@
 
 HTTP API that aggregates content from several sources — changelogs, YouTube channels, RSS feeds and scraped pages — and serves it back as per-user feeds.
 
-Built with [Hono](https://hono.dev), deployed on Cloudflare Workers. It stores nothing itself: it reads a database you own — PostgreSQL, MySQL/MariaDB, SQLite or MongoDB.
+Built with [Hono](https://hono.dev), deployed on Cloudflare Workers or Node/Docker, on top of a single PostgreSQL database. There is one StayUp API; the apps all talk to it.
 
 ## Stack
 
@@ -15,8 +15,8 @@ Built with [Hono](https://hono.dev), deployed on Cloudflare Workers. It stores n
 |---|---|
 | Runtime | Node.js 22 · Cloudflare Workers |
 | Framework | Hono 4 |
-| Databases | PostgreSQL · MySQL/MariaDB · SQLite · MongoDB — one adapter each, behind a single contract |
-| Tests | Vitest — 295 tests, of which a conformance suite every adapter must pass |
+| Database | PostgreSQL |
+| Tests | Vitest |
 | Quality | Biome (lint + format) · strict TypeScript |
 | Documentation | OpenAPI 3.1 · [Scalar](https://scalar.com) UI |
 
@@ -47,15 +47,13 @@ docker compose up -d          # api :3000 · db :5432 · pgadmin :5050
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | built from `DB_*` | Connection string. Its scheme picks the engine — see [Databases](#databases) |
+| `DATABASE_URL` | built from `DB_*` | PostgreSQL connection string |
 | `DB_HOST` `DB_PORT` `DB_NAME` `DB_USER` `DB_PASSWORD` | `localhost` `5432` `stayup` `postgres` `postgres` | Alternative to `DATABASE_URL` |
 | `JWT_SECRET` | `changeme` | Token signing key — **change this in production** |
 | `PORT` | `3000` | Listening port |
 | `UI_URL` | `http://localhost:3001` | Redirect target after OAuth |
 | `GOOGLE_CLIENT_ID` `GOOGLE_CLIENT_SECRET` | — | Google OAuth (optional) |
 | `GITHUB_CLIENT_ID` `GITHUB_CLIENT_SECRET` | — | GitHub OAuth (optional) |
-| `REGISTRATION_MODE` | `open` | `open`: sign-ups activate immediately. `approval`: sign-ups queue for an admin — see [Registration modes](#registration-modes) |
-| `INSTANCE_NAME` | — | Human-readable name for this instance, exposed by `GET /auth/config`. Apps use it as the default label when a user adds this instance as a secondary API |
 | `CLEANUP_SECRET` | — | Shared secret that lets the cleanup cron call `POST /ui/maintenance/cleanup` without an admin JWT. Empty → only an admin can trigger the purge |
 
 On Cloudflare Workers these are set with `wrangler secret put <NAME>`.
@@ -108,7 +106,7 @@ Every route is described in the OpenAPI specification served at `/openapi.json` 
 | Connector API (write) | `POST /connector-api/:provider/{register,sources,items,errors}` · `GET /connector-api/:provider/sources[/:id/{state,versions}]` · `PATCH /connector-api/:provider/sources/:id/config` · `DELETE /connector-api/:provider/sources/:id/old-items` | connector key |
 | Provider fluxes | `GET /providers/:provider/fluxes` · `POST`/`DELETE /providers/:provider/fluxes/:id/subscribe` | authenticated |
 | Users | `GET`/`PATCH /ui/users/:userId` · `GET /ui/users/:userId/feed[/:connector]` · `POST`/`DELETE /ui/users/:userId/repositories` | self or admin |
-| Administration | `GET`/`POST`/`DELETE` `/ui/users` · `/ui/repositories` · `/ui/data-sources` · `/ui/flux-requests` · `/ui/providers` · `/ui/admins` · `/ui/connector-keys` · `GET`/`PATCH /ui/maintenance/retention` | admin |
+| Administration | `GET`/`POST`/`DELETE` `/ui/users` · `/ui/repositories` · `/ui/flux-requests` · `/ui/providers` · `/ui/admins` · `/ui/connector-keys` · `GET`/`PATCH /ui/maintenance/retention` | admin |
 | Maintenance | `POST /ui/maintenance/cleanup` | admin **or** `CLEANUP_SECRET` |
 
 ### Authentication
@@ -144,21 +142,9 @@ Further admins are then created from `stayup-ui`'s admin area (super admin only)
 
 OAuth sign-up automatically links the account to an existing user when the email address matches. Callbacks accept a `redirect_uri` using the `stayup://` or `exp://` scheme for mobile deep links; any other scheme is ignored in favour of `UI_URL`.
 
-`GET /auth/config` (public) reports what a client needs before showing a login screen: the instance name, the registration mode and which login methods this instance offers (`{ name, registrationMode, emailPassword, oauth: { google, github } }`). `name` is `INSTANCE_NAME` or `null`.
+`GET /auth/config` (public) reports which login methods the API offers (`{ emailPassword, oauth: { google, github } }`).
 
-The OAuth start routes (`GET /auth/oauth/:provider`) accept an optional opaque `client_state` query param, echoed back unchanged as `&state=` on the callback redirect — an app that holds several instances uses it to route the returned token to the instance that began the flow.
-
-### Registration modes
-
-`REGISTRATION_MODE` controls what a public sign-up does:
-
-- `open` (default) — `POST /auth/register` creates the account and returns a token (`201`); OAuth sign-up logs the user straight in.
-- `approval` — the sign-up is parked in `pending_user` instead. `POST /auth/register` returns `202 {"status":"pending_approval"}` with **no token**; OAuth redirects back with `?error=pending_approval`; `POST /auth/login` answers `403 {"error":"pending_approval"}`. An admin then works the queue:
-  - `GET /ui/users/pending` — the waiting sign-ups (`method` is `password` or the OAuth provider).
-  - `POST /ui/users/pending/:id/approve` — creates the real account (`201`).
-  - `POST /ui/users/pending/:id/reject` — drops the request (`200`).
-
-Admin-created users (`POST /ui/users`, `npm run create-user`) are always active, whatever the mode. An OAuth sign-up whose verified e-mail already matches an active account is linked to it without going through the queue.
+The OAuth start routes (`GET /auth/oauth/:provider`) accept an optional opaque `client_state` query param, echoed back unchanged as `&state=` on the callback redirect.
 
 ### Flux approval
 
@@ -169,41 +155,11 @@ Each provider carries a `flux_approval` mode in `provider_registry` (`auto` | `m
 
 Subscribing to a flux that already exists is never gated.
 
-## Databases
+## Database
 
-The API speaks to no engine directly. It calls the storage contract in
-[`src/db/port.ts`](src/db/port.ts), and one adapter per engine fulfils it. The scheme of
-`DATABASE_URL` picks the adapter:
+PostgreSQL only. The schema is [`src/db/schema.sql`](src/db/schema.sql), applied automatically when the container first starts and when functional tests run.
 
-| Engine | URL scheme | Driver to install | Schema |
-|---|---|---|---|
-| PostgreSQL | `postgres://` `postgresql://` | — | [`src/db/schema.sql`](src/db/schema.sql) |
-| MySQL / MariaDB | `mysql://` `mariadb://` | `npm install mysql2` | [`src/db/schema.mysql.sql`](src/db/schema.mysql.sql) |
-| SQLite | `sqlite://` `file://` | `npm install better-sqlite3` | [`src/db/schema.sqlite.sql`](src/db/schema.sqlite.sql) |
-| MongoDB | `mongodb://` `mongodb+srv://` | `npm install mongodb` | none — collections are created on first write |
-
-Tables, collections and columns carry the same names whichever engine runs, so the storage
-layer is described once and only its dialect changes. What guarantees it is
-[`tests/conformance/datastore.ts`](tests/conformance/datastore.ts): forty-four
-behaviours, stated without a single query or table name, that CI checks against a real
-PostgreSQL, MySQL, SQLite and MongoDB. Adding an engine means writing an adapter, passing
-that suite, and registering it in [`src/db/store.ts`](src/db/store.ts).
-
-The core tables are `repository` (a tracked source), `connector_item` (all collected
-content, one table for every provider, discriminated by a `provider` column), `user_repository`
-(subscriptions), `provider_registry` (one row per provider — display name, ordering, optional
-display template, `flux_approval` mode, `retention_days` override), `connector_key` (connector
-API keys), `app_setting` (instance settings such as the global content-retention default) and
-`log` (connector run errors). Auth relies on the `user`, `account`, `session` and
-`verification` tables, in [Better Auth](https://better-auth.com) format — managed by
-`stayup-ui`.
-
-Drivers load on demand, so a PostgreSQL deployment never pulls the others in — and none of
-them reaches the Cloudflare Workers bundle, where they could not run anyway: Workers only
-opens the kind of connection PostgreSQL uses, so the other three need Docker or Node.
-
-The PostgreSQL schema is applied automatically when the container first starts and when
-functional tests run.
+The core tables are `repository` (a tracked source), `connector_item` (all collected content, one table for every provider, discriminated by a `provider` column), `user_repository` (subscriptions), `provider_registry` (one row per provider — display name, ordering, `flux_approval` mode, `retention_days` override), `connector_key` (connector API keys), `app_setting` (the global content-retention default) and `log` (connector run errors). Auth relies on the `user`, `account`, `session` and `verification` tables, in [Better Auth](https://better-auth.com) format — managed by `stayup-ui`.
 
 ## Connectors
 
@@ -212,7 +168,7 @@ independent project that collects one kind of source and **talks to this API ove
 it never touches the database. Everything it does goes through `/connector-api/:provider/*`,
 authenticated with a provider-scoped [connector key](#authentication):
 
-- `POST …/register` — declare the display name, sort order and display template on every
+- `POST …/register` — declare the display name and sort order on every
   run (idempotent).
 - `POST …/sources` / `GET …/sources` — follow a URL / list the ones to collect.
 - `GET …/sources/:id/state` and `…/versions` — the last known version, or every known
@@ -227,12 +183,7 @@ works for older connector versions, but retention is now an **instance setting**
 [Content retention](#content-retention).
 
 The API never hardcodes a provider name: a provider **exists** as soon as it has a row in
-`provider_registry` or any content in `connector_item`. Its display name and optional
-display **template** (`provider_registry.template`, a JSON manifest the apps render from —
-relayed untouched, never parsed here) come from `provider_registry`. Adding a provider — and
-how it looks in the apps — is therefore data only, no code to touch in `stayup-api`. See
-`GET /connectors/providers` for the list, `docs/display-templates.md` for the template
-reference, and `docs/self-hosting-and-providers.md` for the full connector contract.
+`provider_registry` or any content in `connector_item`. Its display name comes from `provider_registry`; how each provider is rendered is hardcoded in the three apps.
 
 ### Content retention
 
@@ -252,38 +203,14 @@ sets the policy and a scheduled job pulls the trigger:
 `POST /ui/maintenance/cleanup` with `CLEANUP_SECRET` — set the `STAYUP_API_URL` and
 `CLEANUP_SECRET` repository secrets to enable it (or run cleanup from any other cron).
 
-### Secondary data sources
-
-`DATABASE_URL` is the **primary** database — users, admins, subscriptions, the provider
-registry, plus whatever the primary instance's connectors write. An admin can attach
-**secondary** databases (same shape — `connector_item` + `provider_registry`), so one
-instance aggregates feeds collected against several databases:
-
-- `GET /ui/data-sources` — the primary (engine + host, never the password) and every
-  secondary.
-- `POST /ui/data-sources/test` — `{url}` → `{ ok, engine, connectors }` without saving.
-- `POST /ui/data-sources` — `{name, url}` → re-tests, refuses a database that exposes no
-  provider, then stores the URL **encrypted at rest** (AES-GCM, key derived from
-  `JWT_SECRET` — see [`src/db/secretbox.ts`](src/db/secretbox.ts)).
-- `DELETE /ui/data-sources/:id` — removes it and, in cascade, the external subscriptions
-  that pointed at it.
-
-Secondary databases are **read-only**: the API only reads their collected content.
-`GET /connectors/providers` merges providers by name across all databases; a feed row from
-a secondary carries `_data_source_id` / `_data_source_name`. A user subscribes to a
-secondary flux through the normal `POST /providers/:provider/fluxes/:id/subscribe` with
-`{ "dataSourceId": <n> }` in the body (`external_subscription` table, keyed by URL). An
-unreachable secondary is skipped, never fatal.
-
 ## Tests
 
 ```bash
 npm run test:unit        # fast, no dependency
-npm run test:conformance # the adapter contract, on an in-memory SQLite
-npm test                 # full — PostgreSQL, MySQL and MongoDB required
+npm test                 # full — requires PostgreSQL
 ```
 
-Unit tests isolate each route by replacing the SQL layer with an ordered mock (`tests/helpers.ts`). Functional tests run against a real `stayup_test` database and check end-to-end flows, and run the conformance suite against a real MySQL and MongoDB.
+Unit tests isolate each route by replacing the SQL layer with an ordered mock (`tests/helpers.ts`). Functional tests run against a real `stayup_test` database and check end-to-end flows.
 
 Type checking covers source **and** tests through `tsconfig.test.json`. Lint, typecheck, build and tests all run in CI before any deployment.
 

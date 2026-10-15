@@ -9,7 +9,6 @@ import { adminsRoute } from './routes/admins.js'
 import { authRoute } from './routes/auth.js'
 import { connectorApiRoute } from './routes/connectorApi.js'
 import { connectorsRoute } from './routes/connectors.js'
-import { dataSourcesRoute } from './routes/dataSources.js'
 import { fluxRequestsAdminRoute } from './routes/fluxRequests.js'
 import { maintenanceRoute } from './routes/maintenance.js'
 import { oauthRoute } from './routes/oauth.js'
@@ -28,7 +27,6 @@ app.route('/connectors', connectorsRoute)
 app.route('/connector-api', connectorApiRoute)
 app.route('/providers', providerFluxesRoute)
 app.route('/ui/users', uiUsersRoute)
-app.route('/ui/data-sources', dataSourcesRoute)
 app.route('/ui/admins', adminsRoute)
 app.route('/ui/providers', adminProvidersRoute)
 app.route('/ui/repositories', adminRepositoriesRoute)

@@ -11,8 +11,6 @@ export const TEST_ENV: Bindings = {
   GOOGLE_CLIENT_SECRET: 'google-client-secret',
   GITHUB_CLIENT_ID: 'github-client-id',
   GITHUB_CLIENT_SECRET: 'github-client-secret',
-  REGISTRATION_MODE: 'open',
-  INSTANCE_NAME: '',
   CLEANUP_SECRET: 'test-cleanup-secret',
 }
 

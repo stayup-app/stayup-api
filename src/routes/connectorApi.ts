@@ -18,14 +18,12 @@ export const connectorApiRoute = new Hono<{ Bindings: Bindings }>()
 
 connectorApiRoute.use('/:provider/*', connectorAuth, requireOwnProvider)
 
-// POST /:provider/register — self-declaration at startup (display name, display
-// template). Idempotent: safe to call on every run.
+// POST /:provider/register — self-declaration at startup (display name). Idempotent: safe to call on every run.
 connectorApiRoute.post('/:provider/register', async (c) => {
   const provider = c.req.param('provider')
   const body = await c.req.json<{
     displayName?: string
     sortOrder?: number
-    template?: unknown
   }>()
 
   if (!body.displayName) {
@@ -37,7 +35,6 @@ connectorApiRoute.post('/:provider/register', async (c) => {
     name: provider,
     displayName: body.displayName,
     sortOrder: body.sortOrder,
-    template: body.template,
   })
   return c.json({ success: true })
 })

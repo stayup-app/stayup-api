@@ -71,61 +71,13 @@ describe('GET /connectors/providers', () => {
     expect((await json(res)).providers).toEqual([])
   })
 
-  it('relays the display template a provider declares, unchanged', async () => {
-    const template = {
-      version: 1,
-      display: { name: 'GitHub Trending', accent: '#f4b585' },
-      list: { layout: 'row', primary: 'title' },
-      detail: { mode: 'table', collection: 'repos' },
-    }
-    const sql = createSqlMock()
-    sql
-      .mockResolvedValueOnce([{ name: 'github_trending' }, { name: 'youtube' }]) // listProviderNames: registeredNames
-      .mockResolvedValueOnce([]) // listProviderNames: namesWithContent
-      .mockResolvedValueOnce([
-        {
-          name: 'github_trending',
-          display_name: 'GitHub Trending',
-          sort_order: 50,
-          template,
-        },
-        // youtube: no declared template → key absent from the response
-        { name: 'youtube', display_name: 'YouTube', sort_order: 20 },
-      ]) // readRegistry
-    vi.mocked(getSql).mockReturnValue(sql as never)
-
-    const res = await app.request(
-      '/connectors/providers',
-      { headers: await authHeaders('user') },
-      TEST_ENV,
-    )
-    expect(res.status).toBe(200)
-    expect((await json(res)).providers).toEqual([
-      { name: 'youtube', displayName: 'YouTube', fluxApproval: 'auto' },
-      {
-        name: 'github_trending',
-        displayName: 'GitHub Trending',
-        fluxApproval: 'auto',
-        template,
-      },
-    ])
-  })
-
-  it('keeps template + flux_approval when the retention_days column is missing', async () => {
+  it('keeps flux_approval when the retention_days column is missing', async () => {
     // Regression: a registry created before the retention feature does not have
     // the `retention_days` column yet. The full SELECT throws `42703`; we must
-    // re-read WITHOUT that column — not fall back to a bare registry, otherwise
-    // the apps lose icons and formatting.
-    const template = {
-      version: 1,
-      display: { name: 'RSS' },
-      list: { primary: 'title' },
-    }
+    // re-read WITHOUT that column.
     const missingColumn = Object.assign(
       new Error('column "retention_days" does not exist'),
-      {
-        code: '42703',
-      },
+      { code: '42703' },
     )
     const sql = createSqlMock()
     sql
@@ -137,7 +89,6 @@ describe('GET /connectors/providers', () => {
           name: 'rss',
           display_name: 'RSS',
           sort_order: 30,
-          template,
           flux_approval: 'manual',
         },
       ]) // readRegistry — SELECT without retention_days
@@ -150,7 +101,7 @@ describe('GET /connectors/providers', () => {
     )
     expect(res.status).toBe(200)
     expect((await json(res)).providers).toEqual([
-      { name: 'rss', displayName: 'RSS', fluxApproval: 'manual', template },
+      { name: 'rss', displayName: 'RSS', fluxApproval: 'manual' },
     ])
   })
 })

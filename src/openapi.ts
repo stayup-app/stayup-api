@@ -123,9 +123,7 @@ export const openApiSpec = {
       get: {
         summary: 'Public authentication configuration',
         description:
-          'What a client needs to know before showing the login screen: ' +
-          'the instance’s readable name (`INSTANCE_NAME`, `null` if unset), ' +
-          'registration mode (`open` | `approval`) and available login methods.',
+          'What a client needs to know before showing the login screen: the available login methods.',
         tags: ['Authentication'],
         responses: {
           200: {
@@ -135,11 +133,6 @@ export const openApiSpec = {
                 schema: {
                   type: 'object',
                   properties: {
-                    name: { type: 'string', nullable: true },
-                    registrationMode: {
-                      type: 'string',
-                      enum: ['open', 'approval'],
-                    },
                     emailPassword: { type: 'boolean' },
                     oauth: {
                       type: 'object',
@@ -446,13 +439,6 @@ export const openApiSpec = {
                             description:
                               'Mode for a user adding a flux: `auto` (created right away) or `manual` (a request an admin must approve).',
                           },
-                          template: {
-                            type: 'object',
-                            nullable: true,
-                            description:
-                              'Display manifest the provider declares for the apps (provider_registry.template). Relayed as-is, not interpreted by the API; absent if the provider does not publish one — apps then render generically.',
-                            additionalProperties: true,
-                          },
                         },
                       },
                     },
@@ -736,154 +722,6 @@ export const openApiSpec = {
           },
           404: { description: 'Admin not found' },
           409: { description: 'You cannot delete yourself' },
-        },
-      },
-    },
-    '/ui/data-sources': {
-      get: {
-        summary: 'Secondary databases',
-        description:
-          'The primary database (info) + the declared secondary databases. The ' +
-          'connection string is never returned — only the host. Admin required.',
-        tags: ['Administration'],
-        security: [{ bearerAuth: [] }],
-        responses: {
-          200: { description: 'Primary database + secondary databases' },
-          403: { description: 'Admin required' },
-        },
-      },
-      post: {
-        summary: 'Add a secondary database',
-        description:
-          'Tests the URL, refuses if no connector_* table exists there, then ' +
-          'saves it encrypted. Admin required.',
-        tags: ['Administration'],
-        security: [{ bearerAuth: [] }],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['name', 'url'],
-                properties: {
-                  name: { type: 'string' },
-                  url: {
-                    type: 'string',
-                    example: 'postgres://user:pass@host:5432/db',
-                  },
-                },
-              },
-            },
-          },
-        },
-        responses: {
-          201: { description: 'Database added' },
-          400: { description: 'Invalid URL, unreachable, or no connector' },
-          403: { description: 'Admin required' },
-        },
-      },
-    },
-    '/ui/data-sources/test': {
-      post: {
-        summary: 'Test a database URL without saving it',
-        description:
-          'Returns `{ ok, engine, connectors }` or `{ ok: false, error }`. Admin required.',
-        tags: ['Administration'],
-        security: [{ bearerAuth: [] }],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['url'],
-                properties: { url: { type: 'string' } },
-              },
-            },
-          },
-        },
-        responses: {
-          200: { description: 'Test result' },
-          403: { description: 'Admin required' },
-        },
-      },
-    },
-    '/ui/data-sources/{id}': {
-      delete: {
-        summary: 'Remove a secondary database',
-        description:
-          'Deletes the database and, cascading, the external subscriptions that ' +
-          'targeted it. Admin required.',
-        tags: ['Administration'],
-        security: [{ bearerAuth: [] }],
-        parameters: [
-          {
-            name: 'id',
-            in: 'path',
-            required: true,
-            schema: { type: 'integer' },
-          },
-        ],
-        responses: {
-          200: { description: 'Database removed' },
-          404: { description: 'Database not found' },
-        },
-      },
-    },
-    '/ui/users/pending': {
-      get: {
-        summary: 'Sign-ups awaiting approval',
-        description:
-          'Accounts created in `approval` mode and not yet activated. Admin required.',
-        tags: ['Administration'],
-        security: [{ bearerAuth: [] }],
-        responses: {
-          200: { description: 'List of pending sign-ups' },
-          403: { description: 'Admin required' },
-        },
-      },
-    },
-    '/ui/users/pending/{id}/approve': {
-      post: {
-        summary: 'Approve a pending sign-up',
-        description:
-          'Creates the account from the request (e-mail or OAuth) and removes ' +
-          'the pending row. Admin required.',
-        tags: ['Administration'],
-        security: [{ bearerAuth: [] }],
-        parameters: [
-          {
-            name: 'id',
-            in: 'path',
-            required: true,
-            schema: { type: 'string' },
-          },
-        ],
-        responses: {
-          201: { description: 'Account created' },
-          404: { description: 'Request not found' },
-          409: { description: 'Email taken in the meantime' },
-        },
-      },
-    },
-    '/ui/users/pending/{id}/reject': {
-      post: {
-        summary: 'Reject a pending sign-up',
-        description: 'Deletes the request. Admin required.',
-        tags: ['Administration'],
-        security: [{ bearerAuth: [] }],
-        parameters: [
-          {
-            name: 'id',
-            in: 'path',
-            required: true,
-            schema: { type: 'string' },
-          },
-        ],
-        responses: {
-          200: { description: 'Request rejected' },
-          404: { description: 'Request not found' },
         },
       },
     },
