@@ -102,6 +102,22 @@ adminRepositoriesRoute.get('/', async (c) => {
   return c.json({ repositories: visible })
 })
 
+// GET /:repoId/subscribers — who follows this repository (admin only: a connector
+// key must not read user e-mail addresses)
+adminRepositoriesRoute.get('/:repoId/subscribers', async (c) => {
+  if (providerScope(c) !== null) return c.json({ error: 'Forbidden' }, 403)
+
+  const repoId = Number.parseInt(c.req.param('repoId') as string, 10)
+  if (Number.isNaN(repoId))
+    return c.json({ error: 'Repository not found' }, 404)
+
+  const store = await getStore(c.env.DATABASE_URL)
+  if (!(await store.getSource(repoId)))
+    return c.json({ error: 'Repository not found' }, 404)
+
+  return c.json({ subscribers: await store.listSourceSubscribers(repoId) })
+})
+
 // DELETE /:repoId/data — delete connector data only (keep repository + subscriptions)
 adminRepositoriesRoute.delete('/:repoId/data', async (c) => {
   const repoId = Number.parseInt(c.req.param('repoId') as string, 10)

@@ -65,6 +65,59 @@ describe('GET /ui/repositories', () => {
   })
 })
 
+describe('GET /ui/repositories/:repoId/subscribers', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns 403 for user role', async () => {
+    mockSql([])
+    const res = await app.request(
+      '/ui/repositories/1/subscribers',
+      { headers: await authHeaders('user') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(403)
+  })
+
+  it('returns 404 for an unknown repository', async () => {
+    mockSql([[]]) // getSource → none
+    const res = await app.request(
+      '/ui/repositories/99/subscribers',
+      { headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+  })
+
+  it('returns 404 for a non-numeric id', async () => {
+    mockSql([])
+    const res = await app.request(
+      '/ui/repositories/abc/subscribers',
+      { headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(404)
+  })
+
+  it('lists the subscribed users for an admin', async () => {
+    const subscribers = [
+      {
+        id: 'u1',
+        name: 'Ada',
+        email: 'ada@x.dev',
+        subscribed_at: '2026-01-01',
+      },
+    ]
+    mockSql([[SAMPLE_REPO], subscribers]) // getSource, listSourceSubscribers
+    const res = await app.request(
+      '/ui/repositories/1/subscribers',
+      { headers: await authHeaders('admin') },
+      TEST_ENV,
+    )
+    expect(res.status).toBe(200)
+    expect((await json(res)).subscribers).toEqual(subscribers)
+  })
+})
+
 describe('DELETE /ui/repositories/:repoId/data', () => {
   beforeEach(() => vi.clearAllMocks())
 

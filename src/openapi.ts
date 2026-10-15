@@ -1154,6 +1154,28 @@ export const openApiSpec = {
         },
       },
     },
+    '/ui/repositories/{repoId}/subscribers': {
+      get: {
+        summary: "List a repository's subscribers (admin)",
+        description:
+          'The users following this repository, oldest subscription first. Admin JWT only: a connector key gets 403.',
+        tags: ['Admin — Repositories'],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: 'repoId',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer' },
+          },
+        ],
+        responses: {
+          200: { description: 'Subscribers' },
+          403: { description: 'Not an admin' },
+          404: { description: 'Repository not found' },
+        },
+      },
+    },
     '/ui/repositories/{repoId}/data': {
       delete: {
         summary: "Delete only a repository's connector data (admin)",

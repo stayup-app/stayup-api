@@ -75,6 +75,14 @@ export interface UserRow {
   created_at: string
 }
 
+/** A user subscribed to a source, as shown in the admin's subscriber list. */
+export interface SourceSubscriberRow {
+  id: string
+  name: string
+  email: string
+  subscribed_at: string
+}
+
 export interface FluxRequestRow {
   id: string
   user_id: string
@@ -302,6 +310,8 @@ export interface DataStore {
   unsubscribe(userId: string, sourceId: number): Promise<boolean>
   deleteSubscriptionsForSource(sourceId: number): Promise<void>
   countSubscribers(sourceId: number): Promise<number>
+  /** The users subscribed to a source, oldest subscription first. */
+  listSourceSubscribers(sourceId: number): Promise<SourceSubscriberRow[]>
 
   // ── Users and accounts ───────────────────────────────────────────────────
 

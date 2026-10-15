@@ -21,6 +21,7 @@ import type {
   ProviderRegistration,
   RegistryEntry,
   Source,
+  SourceSubscriberRow,
   SubscriptionRow,
   UserRow,
 } from './port.js'
@@ -685,6 +686,18 @@ export class PostgresStore implements DataStore {
       SELECT COUNT(*) AS count FROM user_repository WHERE repository_id = ${sourceId}
     `
     return Number.parseInt(row.count, 10)
+  }
+
+  async listSourceSubscribers(
+    sourceId: number,
+  ): Promise<SourceSubscriberRow[]> {
+    return this.sql<SourceSubscriberRow[]>`
+      SELECT u.id, u.name, u.email, ur.created_at AS subscribed_at
+      FROM user_repository ur
+      JOIN "user" u ON u.id = ur.user_id
+      WHERE ur.repository_id = ${sourceId}
+      ORDER BY ur.created_at, u.email
+    `
   }
 
   // ── Users and accounts ───────────────────────────────────────────────────

@@ -288,6 +288,32 @@ describe('GET /ui/repositories', () => {
   })
 })
 
+describe('GET /ui/repositories/:repoId/subscribers', () => {
+  it('returns 403 for user role', async () => {
+    const res = await app.request(
+      `/ui/repositories/${createdRepoId}/subscribers`,
+      { headers: { Authorization: `Bearer ${registeredUserToken}` } },
+      FUNCTIONAL_ENV,
+    )
+    expect(res.status).toBe(403)
+  })
+
+  it('lists who follows the repository', async () => {
+    await sql.unsafe(
+      `INSERT INTO user_repository (id, user_id, repository_id) VALUES ('func-sub-1', '${registeredUserId}', ${createdRepoId})`,
+    )
+    const res = await app.request(
+      `/ui/repositories/${createdRepoId}/subscribers`,
+      { headers: await authHeaders('admin') },
+      FUNCTIONAL_ENV,
+    )
+    expect(res.status).toBe(200)
+    const body = await json(res)
+    expect(body.subscribers).toHaveLength(1)
+    expect(body.subscribers[0].email).toBe(TEST_EMAIL)
+  })
+})
+
 describe('DELETE /ui/repositories/:repoId/data', () => {
   it('returns 403 for user role', async () => {
     const res = await app.request(
