@@ -1,7 +1,7 @@
 import { hash } from 'bcryptjs'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import app from '../../src/app.js'
-import { TEST_ENV, authHeaders, json, mockSql } from '../helpers.js'
+import { authHeaders, json, mockSql, TEST_ENV } from '../helpers.js'
 
 vi.mock('../../src/db/client.js', () => ({ getSql: vi.fn() }))
 

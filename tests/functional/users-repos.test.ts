@@ -7,6 +7,7 @@ import { closeSql, getSql, trackOpenConnections } from '../../src/db/client.js'
 
 // closeSql() only closes tracked connections: tracking is opt-in.
 trackOpenConnections(true)
+
 import type { Bindings } from '../../src/types.js'
 import { authHeaders, json } from '../helpers.js'
 

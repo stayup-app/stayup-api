@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import app from '../../src/app.js'
 import { PostgresStore } from '../../src/db/postgres.js'
 import { newItemsMessage, notifyNewItems } from '../../src/push.js'
-import { TEST_ENV, createSqlMock, json, mockSql } from '../helpers.js'
+import { createSqlMock, json, mockSql, TEST_ENV } from '../helpers.js'
 
 vi.mock('../../src/db/client.js', () => ({ getSql: vi.fn() }))
 

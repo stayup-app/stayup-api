@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import app from '../../src/app.js'
-import { TEST_ENV, json } from '../helpers.js'
+import { json, TEST_ENV } from '../helpers.js'
 
 describe('GET /', () => {
   it('returns health check without auth', async () => {
