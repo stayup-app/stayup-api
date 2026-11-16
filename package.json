@@ -31,7 +31,7 @@
     "@scalar/hono-api-reference": "^0.12.19",
     "bcryptjs": "^3.0.3",
     "hono": "^4.13.18",
-    "postgres": "^4.1.1"
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",
