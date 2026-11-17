@@ -23,6 +23,16 @@ app.use(cors({ origin: '*', allowHeaders: ['Authorization', 'Content-Type'] }))
 app.route('/auth', authRoute)
 app.route('/auth', oauthRoute)
 app.get('/', (c) => c.json({ status: 'ok' }))
+
+// YouTube refuses embeds (error 153) from webviews without an http(s) origin
+// (tauri://localhost in production desktop builds): host the player here so it
+// is loaded from a real https page.
+app.get('/embed/youtube/:id', (c) => {
+  const id = c.req.param('id')
+  if (!/^[\w-]{4,20}$/.test(id)) return c.text('Invalid video id', 400)
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,iframe{margin:0;width:100%;height:100%;border:0;background:#000}</style></head><body><iframe src="https://www.youtube-nocookie.com/embed/${id}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></body></html>`
+  return c.html(html, 200, { 'Cache-Control': 'public, max-age=86400' })
+})
 app.route('/connectors', connectorsRoute)
 app.route('/connector-api', connectorApiRoute)
 app.route('/providers', providerFluxesRoute)
